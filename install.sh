@@ -35,16 +35,57 @@ fetch_and_run() {
     return $rc
 }
 
-# ── Цвета ─────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-GRAY='\033[0;90m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# ── WEB-ссылка (путь внутри домена, telemt >= 3.5.8) ──────────
+WEB_PATH_MIN_VERSION="3.5.8"
+
+_ver_ge() {
+    local have="$1" need="$2" i x y
+    [ -n "$have" ] || return 1
+    local a b
+    IFS='.' read -r -a a <<< "$have"
+    IFS='.' read -r -a b <<< "$need"
+    for i in 0 1 2; do
+        x="${a[$i]:-0}"; y="${b[$i]:-0}"
+        x="$(printf '%s' "$x" | tr -cd '0-9')"; x="${x:-0}"
+        y="$(printf '%s' "$y" | tr -cd '0-9')"; y="${y:-0}"
+        if [ "$x" -gt "$y" ] 2>/dev/null; then return 0; fi
+        if [ "$x" -lt "$y" ] 2>/dev/null; then return 1; fi
+    done
+    return 0
+}
+
+_web_make_link() {
+    local host="$1" path="$2" secret_hex="$3" dd="${4:-0}" b64="" esc="" hex="70"
+    if [ -z "$path" ]; then
+        if [ "$dd" = "1" ]; then
+            printf 'tg://webproxy?server=%s&secret=dd%s' "$host" "$secret_hex"
+        else
+            printf 'tg://webproxy?server=%s&secret=%s' "$host" "$secret_hex"
+        fi
+        return 0
+    fi
+    [ "$dd" = "1" ] && hex="70dd"
+    esc=$(printf '%s' "${hex}${secret_hex}" | sed 's/\(..\)/\\x\1/g')
+    b64=$(printf '%b' "$esc" | base64 -w0 2>/dev/null)
+    [ -n "$b64" ] || b64=$(printf '%b' "$esc" | base64 2>/dev/null | tr -d '\n')
+    b64=$(printf '%s' "$b64" | tr '+/' '-_' | tr -d '=')
+    printf 'tg://webproxy?server=%s%%2F%s%%2F&secret=%s' "$host" "${path//\//%2F}" "$b64"
+}
+
+# ── Цвета (только когда stdout — терминал; в пайп/файл не течём ESC) ──
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    GRAY='\033[0;90m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; GRAY=''; BOLD=''; DIM=''; NC=''
+fi
 
 # ── Логирование ─────────────────────────────────────────────
 log_info() { echo -e "  ${BLUE}[i]${NC} $1"; }
@@ -106,7 +147,8 @@ CONFIG_PATH_FILE="/opt/mtpr-simple/config_path"
 # ── Функция получения текущего пути к конфигу ──────────────
 get_config_path() {
     if [ -f "$CONFIG_PATH_FILE" ] && [ -s "$CONFIG_PATH_FILE" ]; then
-        local path=$(cat "$CONFIG_PATH_FILE")
+        local path
+        path=$(cat "$CONFIG_PATH_FILE")
         if [ "$path" != "skip" ]; then
             echo "$path"
             return 0
@@ -138,6 +180,64 @@ _looks_like_telemt_config() {
     local _file="$1"
     [ -f "$_file" ] || return 1
     grep -qE '^\[access\.users\]|^\[censorship\]|^\[general\.modes\]|^tls_domain[[:space:]]*=' "$_file" 2>/dev/null
+}
+
+# ── Разбор FakeTLS-доменов ─────────────────
+# Принимает «сырые» строки конфига (tls_domain и tls_domains) и печатает
+# эффективный упорядоченный список доменов: первичный tls_domain первым,
+# затем элементы tls_domains, дубликаты убраны (как в самом telemt).
+_parse_tls_domains() {
+    local _raw="$1"
+    local _primary="" _extra="" _body="" _seen=" " _d=""
+    _primary=$(printf '%s\n' "$_raw" | grep -E '^[[:space:]]*tls_domain[[:space:]]*=' | head -1 \
+        | sed -E 's/^[^=]*=//; s/#.*$//' | tr -d '"' | tr -d '[:space:]')
+    # Дополнительные домены берём ТОЛЬКО из тела массива tls_domains,
+    # иначе в выборку попадают кавычки значения tls_domain.
+    _body=$(printf '%s\n' "$_raw" | awk '
+        /^[[:space:]]*tls_domains[[:space:]]*=/ {
+            if (index($0, "]") > 0) { s=$0; sub(/^[^[]*\[/, "", s); sub(/\].*$/, "", s); print s; exit }
+            grab=1; s=$0; sub(/^[^[]*\[/, "", s); buf=s; next
+        }
+        grab {
+            if (index($0, "]") > 0) { s=$0; sub(/\].*$/, "", s); print buf "\n" s; exit }
+            buf=buf "\n" $0
+        }
+    ')
+    if [ -n "$_body" ]; then
+        _extra=$(printf '%s\n' "$_body" | grep -oE '"[^"]*"' | tr -d '"')
+    fi
+    for _d in $_primary $_extra; do
+        [ -n "$_d" ] || continue
+        _d="${_d%%:*}"   # срезаем порт (example.com:443 -> example.com) после снятия кавычек/пробелов
+        [ -n "$_d" ] || continue
+        case " $_seen " in
+            *" $_d "*) continue ;;
+        esac
+        _seen="${_seen}${_d} "
+        printf '%s\n' "$_d"
+    done
+}
+
+# hex-кодирование домена для SNI: печатает hex или пусто при сбое od
+_domain_hex() {
+    printf '%s' "$1" | od -An -tx1 2>/dev/null | tr -d ' \n'
+}
+
+# Читает FakeTLS-домены из файла конфига и печатает по одному на строку.
+get_tls_domains() {
+    local _cfg="$1"
+    [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 0
+    local _raw
+    _raw=$(awk '
+        /^[[:space:]]*tls_domain[[:space:]]*=/ { print; next }
+        /^[[:space:]]*tls_domains[[:space:]]*=/ {
+            grab=1; print
+            if (index($0, "]") > 0) grab=0
+            next
+        }
+        grab { print; if (index($0, "]") > 0) grab=0 }
+    ' "$_cfg" 2>/dev/null)
+    _parse_tls_domains "$_raw"
 }
 
 # ── Расширенное обнаружение Telemt ──────────────────────────
@@ -174,7 +274,8 @@ detect_telemt_advanced() {
     
     # 3. Проверяем сохранённый путь
     if [ -z "$DETECTED_CONFIG_PATH" ] && [ -f "$CONFIG_PATH_FILE" ] && [ -s "$CONFIG_PATH_FILE" ]; then
-        local _saved_path=$(cat "$CONFIG_PATH_FILE")
+        local _saved_path
+        _saved_path=$(cat "$CONFIG_PATH_FILE")
         if [ "$_saved_path" != "skip" ] && [ -f "$_saved_path" ] && _looks_like_telemt_config "$_saved_path"; then
             DETECTED_CONFIG_PATH="$_saved_path"
         fi
@@ -214,13 +315,15 @@ get_public_ip() {
 
 # ── Функция генерации ссылок для подключения (ИСПРАВЛЕНА) ────
 generate_proxy_links() {
-    local config_path=$(get_config_path)
+    local config_path
+    config_path=$(get_config_path)
     if [ ! -f "$config_path" ]; then
         return 1
     fi
     
     # Получаем данные из конфига через расширенное обнаружение
-    local detected_info=$(detect_telemt_advanced)
+    local detected_info
+    detected_info=$(detect_telemt_advanced)
     local IFS=':'
     local parts=($detected_info)
     unset IFS
@@ -301,16 +404,44 @@ generate_proxy_links() {
     
     local links=""
     
-    # TLS режим (ee + secret + hex(tls_domain))
+    # TLS режим (ee + secret + hex(домен)). При нескольких FakeTLS-доменах
+    # (tls_domain + tls_domains) печатаем отдельную ссылку на каждый домен.
     if [ "$tls_enabled" = true ]; then
-        local hex_domain=""
-        if [ -n "$detected_tls_domain" ]; then
-            # Используем od вместо xxd для 100% совместимости
-            hex_domain=$(echo -n "$detected_tls_domain" | od -An -tx1 | tr -d ' \n' 2>/dev/null)
+        local _domains_cfg="$config_path"
+        if [ -n "$detected_path" ]; then
+            _domains_cfg="$detected_path"
         fi
-        local tls_secret="ee${detected_secret}${hex_domain}"
-        links="${links}  TLS:\n"
-        links="${links}  tg://proxy?server=${server}&port=${port}&secret=${tls_secret}\n"
+        local tls_domains=""
+        tls_domains=$(get_tls_domains "$_domains_cfg")
+        local domain_count=0
+        if [ -n "$tls_domains" ]; then
+            domain_count=$(printf '%s\n' "$tls_domains" | grep -c .)
+        fi
+        local _tls_links="" _tls_ok=true
+        if [ "$domain_count" -gt 0 ]; then
+            while IFS= read -r _d; do
+                [ -n "$_d" ] || continue
+                local hex_domain=""
+                hex_domain=$(_domain_hex "$_d")
+                if [ -z "$hex_domain" ]; then
+                    _tls_ok=false
+                    break
+                fi
+                if [ "$domain_count" -eq 1 ]; then
+                    _tls_links="${_tls_links}  TLS:\n"
+                else
+                    _tls_links="${_tls_links}  TLS (${_d}):\n"
+                fi
+                _tls_links="${_tls_links}  tg://proxy?server=${server}&port=${port}&secret=ee${detected_secret}${hex_domain}\n"
+            done <<< "$tls_domains"
+        fi
+        if [ "$domain_count" -eq 0 ] || [ "$_tls_ok" = false ]; then
+            # Домен не задан или hex не собрался — одна ссылка без hex
+            links="${links}  TLS:\n"
+            links="${links}  tg://proxy?server=${server}&port=${port}&secret=ee${detected_secret}\n"
+        else
+            links="${links}${_tls_links}"
+        fi
     fi
     
     # Secure режим (dd + secret)
@@ -332,7 +463,8 @@ generate_proxy_links() {
 # ── Функция добавления ad_tag в конфиг Telemt (без перезапуска) ──
 add_ad_tag_to_config() {
     local ad_tag="$1"
-    local config_path=$(get_config_path)
+    local config_path
+    config_path=$(get_config_path)
     
     if [ -z "$ad_tag" ]; then
         return 0
@@ -376,7 +508,8 @@ generate_secret() {
 add_user_to_config() {
     local user_name="$1"
     local user_secret="$2"
-    local config_path=$(get_config_path)
+    local config_path
+    config_path=$(get_config_path)
     
     if [ -z "$user_name" ] || [ -z "$user_secret" ]; then
         log_error "Имя пользователя и секрет обязательны"
@@ -395,7 +528,7 @@ add_user_to_config() {
     
     if grep -q '^\[access\.users\]' "$config_path"; then
         sed -i "/^\[access\.users\]/a ${user_name} = \"$user_secret\"" "$config_path"
-        log_info "Добавлен пользователь: $user_name = $user_secret"
+        log_info "Добавлен пользователь: $user_name"
     else
         echo "" >> "$config_path"
         echo "[access.users]" >> "$config_path"
@@ -408,7 +541,8 @@ add_user_to_config() {
 # ── Функция добавления/обновления public_host в секции [server.links] (без перезапуска) ──
 add_public_host_to_config() {
     local public_host="$1"
-    local config_path=$(get_config_path)
+    local config_path
+    config_path=$(get_config_path)
     
     if [ -z "$public_host" ]; then
         return 0
@@ -455,19 +589,27 @@ setup_web_config() {
     local web_secret="$2"
     local web_host="$3"
     local web_ip="$4"
-    local config_path=$(get_config_path)
+    local config_path
+    config_path=$(get_config_path)
     
-    # Скачиваем шаблон webconfig.txt
-    local web_template="/tmp/webconfig.txt"
+    # Скачиваем шаблон webconfig.txt во временный файл (непредсказуемое имя)
+    local web_template
+    web_template=$(mktemp /tmp/webconfig.XXXXXX.txt 2>/dev/null) || web_template=""
+    if [ -z "$web_template" ]; then
+        log_error "Не удалось создать временный файл для шаблона WEB-конфига"
+        return 1
+    fi
     log_info "Скачивание шаблона WEB-конфига..."
     if ! curl -fsSL "$BASE_URL/data/webconfig.txt" -o "$web_template"; then
         log_error "Не удалось скачать шаблон webconfig.txt"
+        rm -f "$web_template"
         return 1
     fi
     
     # Проверяем обязательные параметры
     if [ -z "$web_host" ]; then
         log_error "WEB-хост (домен) обязателен. Укажите -web-host"
+        rm -f "$web_template"
         return 1
     fi
     
@@ -475,6 +617,7 @@ setup_web_config() {
         web_ip=$(get_public_ip)
         if [ -z "$web_ip" ]; then
             log_error "Не удалось определить внешний IP"
+            rm -f "$web_template"
             return 1
         fi
         log_info "Внешний IP определён: $web_ip"
@@ -483,7 +626,6 @@ setup_web_config() {
     # Генерируем секрет, если не передан
     if [ -z "$web_secret" ]; then
         web_secret=$(generate_secret)
-        log_info "Сгенерирован секрет для WEB: $web_secret"
     fi
     
     # Если пользователь не указан, используем "webuser"
@@ -492,19 +634,34 @@ setup_web_config() {
         log_info "Имя пользователя не указано, используем: $web_user"
     fi
     
-    # Читаем шаблон и подставляем значения
-    local web_config_content=$(cat "$web_template")
-    
-    # Заменяем плейсхолдеры
-    web_config_content="${web_config_content//\"zdez.tvoi.domen.com\"/\"$web_host\"}"
-    web_config_content="${web_config_content//\"12.34.56.789:443\"/\"$web_ip:443\"}"
-    web_config_content="${web_config_content//hello = \"e5544cb710bae52b8bcbc05375921c16\"/hello = \"$web_secret\"}"
+    # Читаем шаблон и подставляем значения ПО КЛЮЧАМ (не по литералам:
+    # правки data/webconfig.txt не должны ломать подстановку)
+    local web_config_content esc_host esc_ip esc_secret
+    esc_host=$(printf '%s' "$web_host" | sed 's/[&#\\]/\\&/g')
+    esc_ip=$(printf '%s' "$web_ip" | sed 's/[&#\\]/\\&/g')
+    esc_secret=$(printf '%s' "$web_secret" | sed 's/[&#\\]/\\&/g')
+    web_config_content=$(sed -E \
+        -e "s#^([[:space:]]*tls_domain[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_host\"#" \
+        -e "s#^([[:space:]]*host[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_host\"#" \
+        -e "s#^([[:space:]]*public_addr[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_ip:443\"#" \
+        -e "s#^([[:space:]]*hello[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_secret\"#" \
+        "$web_template")
+
+    # Проверяем, что подстановка реально произошла (иначе тихий no-op)
+    if ! grep -qF -- "$web_host" <<< "$web_config_content" \
+       || ! grep -qF -- "$web_ip:443" <<< "$web_config_content" \
+       || ! grep -qF -- "$web_secret" <<< "$web_config_content" \
+       || grep -qF -- 'CHANGE_ME_32HEX' <<< "$web_config_content"; then
+        log_error "Не удалось подставить значения в WEB-конфиг (проверьте ключи tls_domain/host/public_addr/access.users в data/webconfig.txt)"
+        rm -f "$web_template"
+        return 1
+    fi
     
     # Заменяем имя пользователя в access.users (если отличается от "hello")
     if [ "$web_user" != "hello" ]; then
         web_config_content="${web_config_content//hello = /$web_user = }"
         # Меняем в links_show
-        web_config_content="${web_config_content//links_show = [\"hello\"]/links_show = [\"$web_user\"]}"
+        web_config_content="${web_config_content//links_show = \[\"hello\"\]/links_show = [\"$web_user\"]}"
         # Меняем в профиле
         web_config_content="${web_config_content//user = \"hello\"/user = \"$web_user\"}"
     fi
@@ -631,7 +788,7 @@ EOF
 
 # ── СТАРОЕ МЕНЮ (ПРОКСИ) ──────────────────────────────────────
 show_proxy_menu() {
-    clear 2>/dev/null || printf '\033[2J\033[H'
+    if [ -t 1 ]; then clear 2>/dev/null || printf '\033[2J\033[H'; fi
     echo ""
     echo -e "  ${CYAN}${BOLD}⚙️ ${NC}${BOLD}Meko Manager ${CYAN}${BOLD} v1.9 ${CYAN}${BOLD}| ${NC}${BOLD}Меню proxy ⚙️${NC}"
     echo -e "  ${BOLD}${DIM}═════════════════════════════════════════════════${NC}"
@@ -652,7 +809,7 @@ show_proxy_menu() {
     echo ""
     echo -en "  ${NC}${BOLD}Ввод (${GREEN}${BOLD}Enter${NC}${BOLD} - стандартная установка):${NC} "
 
-    if ! read -r choice </dev/tty 2>/dev/null; then
+    if ! { read -r choice </dev/tty; } 2>/dev/null; then
         echo ""
         echo -e "  ${RED}[✗]${NC} Не удалось прочитать ввод. Запустите скрипт интерактивно."
         exit 1
@@ -704,7 +861,7 @@ show_proxy_menu() {
 # ── НОВОЕ ГЛАВНОЕ МЕНЮ ────────────────────────────────────────
 show_main_menu() {
     while true; do
-        clear 2>/dev/null || printf '\033[2J\033[H'
+        if [ -t 1 ]; then clear 2>/dev/null || printf '\033[2J\033[H'; fi
         echo ""
         echo -e "  ${CYAN}${BOLD}⚙️ ${NC}${BOLD}MEKO MANAGER ${CYAN}${BOLD}V1.95 ${NC}${BOLD}Меню установщика ${CYAN}${BOLD}⚙️${NC}"
         echo -e "  ${BOLD}${DIM}═════════════════════════════════════════════════${NC}"
@@ -723,13 +880,13 @@ show_main_menu() {
         echo -e "  ${YELLOW}[3]${NC}  ${BOLD}Установка mtproxyl${NC}"
         echo -e "       ${DIM}Установка Telegram MTProto прокси менеджера MTProxyL${NC}"
         echo -e "       ${DIM}на базе движка telemt (Docker)${NC}"
-		echo -e "       ${DIM}Аналог MEKO"
+        echo -e "       ${DIM}Аналог MEKO"
         echo ""
         echo -e "  ${RED}${BOLD}[0]${NC}  ${RED}${BOLD}Выход${NC}"
         echo ""
         echo -en "  ${NC}${BOLD}Ввод (${GREEN}${BOLD}Enter${NC}${BOLD} - установка proxy):${NC} "
 
-        if ! read -r choice </dev/tty 2>/dev/null; then
+        if ! { read -r choice </dev/tty; } 2>/dev/null; then
             echo ""
             echo -e "  ${RED}[✗]${NC} Не удалось прочитать ввод."
             exit 1
@@ -751,18 +908,29 @@ show_main_menu() {
                 fi
                 echo ""
                 echo -e "  ${GRAY}Нажмите Enter для возврата в главное меню...${NC}"
-                read -r </dev/tty 2>/dev/null
+                { read -r </dev/tty; } 2>/dev/null || true
                 ;;
             3)
                 echo ""
                 log_info "Запуск установки mtproxyl..."
                 echo ""
-                wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh && source ~/.bashrc
-                echo ""
-                log_success "Установка mtproxyl завершена"
+                local mtproxyl_tmp
+                mtproxyl_tmp=$(mktemp /tmp/mtproxyl.XXXXXX.sh 2>/dev/null) || mtproxyl_tmp=""
+                if [ -z "$mtproxyl_tmp" ]; then
+                    log_error "Не удалось создать временный файл для установщика mtproxyl"
+                elif curl -fsSL "https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh" -o "$mtproxyl_tmp" && [ -s "$mtproxyl_tmp" ]; then
+                    if bash "$mtproxyl_tmp"; then
+                        log_success "Установка mtproxyl завершена"
+                    else
+                        log_error "Установщик mtproxyl завершился с ошибкой"
+                    fi
+                else
+                    log_error "Не удалось скачать установщик mtproxyl"
+                fi
+                [ -n "$mtproxyl_tmp" ] && rm -f "$mtproxyl_tmp" || true
                 echo ""
                 echo -e "  ${GRAY}Нажмите Enter для возврата в главное меню...${NC}"
-                read -r </dev/tty 2>/dev/null
+                { read -r </dev/tty; } 2>/dev/null || true
                 ;;
             *)
                 # 1 или Enter — меню proxy
@@ -956,8 +1124,8 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
         if [ -z "$DOMAIN" ]; then
             while true; do
                 echo -en "  ${BOLD}Введите SNI домен${NC} ${DIM}(по умолчанию: ozon.ru)${NC}: " >&2
-                if [ -r /dev/tty ]; then
-                    read -r DOMAIN </dev/tty
+                if { : </dev/tty; } 2>/dev/null; then
+                    read -r DOMAIN </dev/tty || true
                 else
                     DOMAIN=""
                 fi
@@ -973,8 +1141,8 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
         if [ -z "$PROXY_PORT" ]; then
             while true; do
                 echo -en "  ${BOLD}Введите порт для прокси${NC} ${DIM}(по умолчанию: 443)${NC}: " >&2
-                if [ -r /dev/tty ]; then
-                    read -r PROXY_PORT </dev/tty
+                if { : </dev/tty; } 2>/dev/null; then
+                    read -r PROXY_PORT </dev/tty || true
                 else
                     PROXY_PORT=""
                 fi
@@ -989,8 +1157,8 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
         # Версия Telemt
         if [[ -n "$FLAG_TELEMT" && -z "$TELEMT_VERSION" ]]; then
             echo -en "  ${BOLD}Введите версию Telemt${DIM} (Enter - последняя версия)${NC}: " >&2
-            if [ -r /dev/tty ]; then
-                read -r TELEMT_VERSION </dev/tty
+            if { : </dev/tty; } 2>/dev/null; then
+                read -r TELEMT_VERSION </dev/tty || true
             else
                 TELEMT_VERSION=""
             fi
@@ -1009,8 +1177,8 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
             echo ""
             echo -e "  ${BOLD}Для WEB-режима необходимо указать домен${NC}"
             echo -en "  ${BOLD}Введите домен для WEB-хоста:${NC} "
-            if [ -r /dev/tty ]; then
-                read -r WEB_HOST </dev/tty
+            if { : </dev/tty; } 2>/dev/null; then
+                read -r WEB_HOST </dev/tty || true
             else
                 WEB_HOST=""
             fi
@@ -1019,12 +1187,17 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
                 exit 1
             fi
         fi
+        # Домен попадает в URL и конфиг nginx — не принимаем мусор
+        if ! [[ "$WEB_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+            log_error "Неверный домен WEB-хоста: $WEB_HOST"
+            exit 1
+        fi
         
         # WEB-пользователь
         if [ -z "$WEB_USER" ]; then
             echo -en "  ${BOLD}Введите имя пользователя для WEB${NC} ${DIM}(по умолчанию: webuser)${NC}: "
-            if [ -r /dev/tty ]; then
-                read -r WEB_USER </dev/tty
+            if { : </dev/tty; } 2>/dev/null; then
+                read -r WEB_USER </dev/tty || true
             else
                 WEB_USER=""
             fi
@@ -1034,14 +1207,13 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
         # WEB-секрет
         if [ -z "$WEB_SECRET" ]; then
             echo -en "  ${BOLD}Введите секрет для WEB${NC} ${DIM}(Enter - сгенерировать автоматически)${NC}: "
-            if [ -r /dev/tty ]; then
-                read -r WEB_SECRET </dev/tty
+            if { : </dev/tty; } 2>/dev/null; then
+                read -r WEB_SECRET </dev/tty || true
             else
                 WEB_SECRET=""
             fi
             if [ -z "$WEB_SECRET" ]; then
                 WEB_SECRET=$(generate_secret)
-                log_info "Сгенерирован секрет: $WEB_SECRET"
             fi
         fi
     fi
@@ -1055,8 +1227,8 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
             else
                 while true; do
                     echo -en "  ${BOLD}Введите порт для фикса${NC} ${DIM}(по умолчанию: 443)${NC}: " >&2
-                    if [ -r /dev/tty ]; then
-                        read -r FIX_PORT </dev/tty
+                    if { : </dev/tty; } 2>/dev/null; then
+                        read -r FIX_PORT </dev/tty || true
                     else
                         FIX_PORT=""
                     fi
@@ -1094,8 +1266,8 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
             echo "" >&2
             while true; do
                 echo -en "  ${NC}${BOLD}Ввод${GREEN}${BOLD} (v2/v3/v4/nft, Enter - v3)${NC}:${NC} " >&2
-                if [ -r /dev/tty ]; then
-                    read -r answer </dev/tty
+                if { : </dev/tty; } 2>/dev/null; then
+                    read -r answer </dev/tty || true
                 else
                     answer=""
                 fi
@@ -1113,17 +1285,27 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
     # Всегда скачиваем свежий rules.sh
     mkdir -p "$INSTALL_DIR/data"
     log_info "Загрузка свежего rules.sh..."
-    curl -fsSL "$BASE_URL/data/rules.sh" -o "$INSTALL_DIR/data/rules.sh"
-    chmod +x "$INSTALL_DIR/data/rules.sh"
+    if ! curl -fsSL "$BASE_URL/data/rules.sh" -o "$INSTALL_DIR/data/rules.sh"; then
+        log_error "Не удалось загрузить data/rules.sh"
+        exit 1
+    fi
+    chmod +x "$INSTALL_DIR/data/rules.sh" || true
 
     # Если тип фикса v4, скачиваем zapret2_fix.sh
     if [[ "$FIX_TYPE" == "v4" ]]; then
         log_info "Загрузка свежего zapret2_fix.sh..."
-        curl -fsSL "$BASE_URL/data/zapret2_fix.sh" -o "$INSTALL_DIR/data/zapret2_fix.sh"
-        chmod +x "$INSTALL_DIR/data/zapret2_fix.sh"
+        if ! curl -fsSL "$BASE_URL/data/zapret2_fix.sh" -o "$INSTALL_DIR/data/zapret2_fix.sh"; then
+            log_error "Не удалось загрузить data/zapret2_fix.sh"
+            exit 1
+        fi
+        chmod +x "$INSTALL_DIR/data/zapret2_fix.sh" || true
     fi
 
     # Подключаем rules.sh
+    if [ ! -f "$INSTALL_DIR/data/rules.sh" ]; then
+        log_error "data/rules.sh не найден"
+        exit 1
+    fi
     source "$INSTALL_DIR/data/rules.sh"
 
     # Если тип v4, подключаем zapret2_fix.sh
@@ -1188,14 +1370,13 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
             if [ -n "$USER_NAME" ]; then
                 if [ -z "$USER_SECRET" ]; then
                     echo -en "  ${BOLD}Введите секрет для пользователя $USER_NAME (Enter - сгенерировать автоматически)${NC}: " >&2
-                    if [ -r /dev/tty ]; then
-                        read -r input_secret </dev/tty
+                    if { : </dev/tty; } 2>/dev/null; then
+                        read -r input_secret </dev/tty || true
                     else
                         input_secret=""
                     fi
                     if [ -z "$input_secret" ]; then
                         USER_SECRET=$(generate_secret)
-                        log_info "Сгенерирован секрет: $USER_SECRET"
                     else
                         USER_SECRET="$input_secret"
                     fi
@@ -1219,7 +1400,7 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
         echo "" >&2
         log_info "Ссылка для подключения к прокси:"
         echo "" >&2
-        links=$(generate_proxy_links)
+        links=$(generate_proxy_links) || links=""
         if [ -n "$links" ]; then
             echo -e "$links" >&2
         else
@@ -1238,10 +1419,25 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
                 # Если не нашли, пробуем для "hello"
                 secret_mode=$(grep -A1 'user = "hello"' "$config_path" | grep 'secret_mode' | head -1 | awk -F'"' '{print $2}')
             fi
+            web_path=""
+            if [ -n "$config_path" ] && [ -f "$config_path" ]; then
+                web_path=$(awk '
+                    /^[[:space:]]*\[\[web\.vhosts\]\][[:space:]]*$/ { inv=1; next }
+                    inv && /^[[:space:]]*\[/ { exit }
+                    inv && /^[[:space:]]*base_path[[:space:]]*=/ { sub(/#.*/,""); sub(/^[^=]*=/,""); gsub(/[[:space:]"]/,""); print; exit }
+                ' "$config_path" 2>/dev/null)
+            fi
+            if [ -n "$web_path" ]; then
+                web_ver=$(telemt --version 2>/dev/null | head -1 | awk '{print $2}')
+                if ! _ver_ge "$web_ver" "$WEB_PATH_MIN_VERSION"; then
+                    log_warning "Путь WEB '/${web_path}' требует telemt ${WEB_PATH_MIN_VERSION}+ (установлен ${web_ver:-?}) — ссылка без пути"
+                    web_path=""
+                fi
+            fi
             if [ "$secret_mode" = "dd" ]; then
-                echo -e "  tg://webproxy?server=${WEB_HOST}&secret=dd${WEB_SECRET}" >&2
+                echo -e "  $(_web_make_link "$WEB_HOST" "$web_path" "$WEB_SECRET" 1)" >&2
             else
-                echo -e "  tg://webproxy?server=${WEB_HOST}&secret=${WEB_SECRET}" >&2
+                echo -e "  $(_web_make_link "$WEB_HOST" "$web_path" "$WEB_SECRET" 0)" >&2
             fi
             echo "" >&2
         fi
@@ -1276,6 +1472,21 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
 
         log_success "Фикс установлен"
     fi
+
+    # ── 5. Установка менеджера (лаунчер mekopr/meko + меню) ──
+    # Ставим ПОСЛЕ telemt и фикса, но БЕЗ запуска меню: flag-режим часто
+    # вызывают в &&-цепочке, и ожидание ввода на /dev/tty заблокировало бы её.
+    echo "" >&2
+    log_info "Установка менеджера MEKO (лаунчер mekopr/meko + меню)..."
+    if ! ensure_file "install_main.sh"; then
+        log_error "Не удалось загрузить install_main.sh — менеджер MEKO не установлен"
+        exit 1
+    fi
+    if ! MEKOPR_NO_MENU=1 bash "$INSTALL_DIR/install_main.sh"; then
+        log_error "Не удалось установить менеджер MEKO"
+        exit 1
+    fi
+    log_success "Менеджер MEKO установлен (запуск: sudo mekopr)"
 
     echo "" >&2
     log_success "Автоматическая установка завершена!"

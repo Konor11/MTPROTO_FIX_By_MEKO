@@ -12,7 +12,7 @@ fetch_and_run() {
     local url="$1"; shift
     local tmp rc=0
     tmp=$(mktemp) || return 1
-    if ! curl -fsSL "$url" -o "$tmp"; then
+    if ! curl -fsSL --max-time 60 "$url" -o "$tmp"; then
         rm -f "$tmp"
         return 1
     fi
@@ -44,18 +44,10 @@ NC='\033[0m'
 # ── Файл для сохранения пути к конфигу (используем общий с main.sh) ──
 CONFIG_PATH_FILE="/opt/mtpr-simple/config_path"
 
-# ── Функция обрезки пробелов ──────────────────────────────
-trim() {
-    local var="$1"
-    var="${var#"${var%%[![:space:]]*}"}"
-    var="${var%"${var##*[![:space:]]}"}"
-    printf '%s' "$var"
-}
-
 # ── Функция получения текущего пути к конфигу Telemt ──────────────
 get_config_path() {
     if [ -f "$CONFIG_PATH_FILE" ] && [ -s "$CONFIG_PATH_FILE" ]; then
-        path=$(cat "$CONFIG_PATH_FILE")
+        local path; path=$(cat "$CONFIG_PATH_FILE")
         if [ "$path" != "skip" ]; then
             echo "$path"
             return 0
@@ -63,16 +55,6 @@ get_config_path() {
     fi
     echo "/etc/telemt/telemt.toml"
     return 0
-}
-
-# ── Функции для работы с TOML ──────────────────────────────
-_toml_get_value() {
-    local _key="$1" _file="$2"
-    [ -f "$_file" ] || return 0
-    awk -v k="$_key" '
-        /^[[:space:]]*#/ { next }
-        $1 == k && $2 == "=" { gsub(/[^0-9]/, "", $3); print $3; exit }
-    ' "$_file" 2>/dev/null
 }
 
 # ── Функция проверки, установлен ли Telemt ──────────────────
@@ -161,7 +143,7 @@ fix_sudo_for_panel() {
             echo -e "  ${YELLOW}[!] Обнаружена альтернатива sudo.ws, но она не активна.${NC}"
             echo -en "  ${BOLD}Активировать sudo.ws для совместимости с панелью? [Y/n]:${NC} "
             local confirm
-            read -r confirm
+            { read -r confirm </dev/tty; } 2>/dev/null || true
             if [[ ! "$confirm" =~ ^[nN]$ ]]; then
                 sudo update-alternatives --set sudo /usr/bin/sudo.ws
                 echo -e "  ${GREEN}[✓] Альтернатива sudo.ws активирована.${NC}"
@@ -178,7 +160,7 @@ fix_sudo_for_panel() {
         echo -e "  ${CYAN}sudo update-alternatives --set sudo /usr/bin/sudo.ws${NC}"
         echo -en "  ${BOLD}Продолжить установку без исправления? [y/N]:${NC} "
         local confirm
-        read -r confirm
+        { read -r confirm </dev/tty; } 2>/dev/null || true
         if [[ "$confirm" =~ ^[nN]$ ]]; then
             echo -e "  ${GRAY}Установка отменена.${NC}"
             return 1
@@ -217,7 +199,7 @@ show_telemt_info() {
             # Генерируем пароль (подходит для всех ОС)
             local generated_password=""
             # Пробуем через /dev/urandom (самый надежный)
-            if [ -c /dev/urandom ] 2>/dev/null; then
+            if [ -c /dev/urandom ]; then
                 generated_password=$(tr -dc 'A-Za-z0-9!@#$%^&*()_+-=' < /dev/urandom 2>/dev/null | head -c 24)
             fi
             # Если не вышло — пробуем через openssl (fallback)
@@ -258,12 +240,12 @@ install_panel() {
         echo ""
         echo -en "  ${BOLD}Продолжить установку панели? ${GREEN}${BOLD}Y - да${NC}${BOLD}/${RED}${BOLD}N - назад в меню${NC}${BOLD}:${NC} "
         local confirm
-        read -r confirm
+        { read -r confirm </dev/tty; } 2>/dev/null || true
         if [[ ! "$confirm" =~ ^[yY]$ ]]; then
             echo -e "  ${GRAY}Установка отменена${NC}"
             echo ""
             echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-            read -rsn1
+            { read -rsn1 </dev/tty; } 2>/dev/null || true
             return 1
         fi
     fi
@@ -275,7 +257,7 @@ install_panel() {
         echo -e "  ${GRAY}Установка отменена${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
@@ -284,12 +266,12 @@ install_panel() {
     
     echo -en "  ${BOLD}Продолжить установку панели? ${GREEN}${BOLD}Y - да${NC}${BOLD}/${RED}${BOLD}N - назад в меню${NC}${BOLD}:${NC} "
     local confirm
-    read -r confirm
+    { read -r confirm </dev/tty; } 2>/dev/null || true
     if [[ "$confirm" =~ ^[nN]$ ]]; then
         echo -e "  ${GRAY}Установка отменена${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
@@ -316,7 +298,7 @@ install_panel() {
     
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция удаления панели ──────────────────────────────────
@@ -339,7 +321,7 @@ uninstall_panel() {
     echo ""
     echo -en "  ${BOLD}Выбор:${NC} "
     local choice
-    read -r choice
+    { read -r choice </dev/tty; } 2>/dev/null || true
     
     case "$choice" in
         1)
@@ -357,12 +339,12 @@ uninstall_panel() {
             echo ""
             echo -en "  ${BOLD}Вы уверены? Полное удаление необратимо! ${GREEN}${BOLD}Y - да${NC}${BOLD}/${RED}${BOLD}N - назад в меню${NC}${BOLD}:${NC} "
             local confirm
-            read -r confirm
+            { read -r confirm </dev/tty; } 2>/dev/null || true
             if [[ ! "$confirm" =~ ^[yY]$ ]]; then
                 echo -e "  ${GRAY}Удаление отменено${NC}"
                 echo ""
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-                read -rsn1
+                { read -rsn1 </dev/tty; } 2>/dev/null || true
                 return 1
             fi
             echo ""
@@ -386,7 +368,7 @@ uninstall_panel() {
     
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция перезапуска панели ──────────────────────────────
@@ -402,7 +384,7 @@ restart_panel() {
     fi
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция просмотра логов панели ──────────────────────────
@@ -411,11 +393,11 @@ view_panel_logs() {
     echo -e "  ${BLUE}[i]${NC} Просмотр логов Telemt Panel (Ctrl+C для выхода)..."
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
     journalctl -u telemt-panel -f
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция открытия конфига панели ─────────────────────────
@@ -428,7 +410,7 @@ edit_panel_config() {
         echo -e "  ${GRAY}Возможно, панель ещё не установлена${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
@@ -439,35 +421,35 @@ edit_panel_config() {
         echo -e "  ${GRAY}После редактирования сохраните файл (Ctrl+O) и закройте (Ctrl+X)${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         nano "$config_path"
     elif command -v vim >/dev/null 2>&1; then
         echo -e "  ${YELLOW}[!]${NC} nano не установлен. Использую vim."
         echo -e "  ${GRAY}Для сохранения: ESC → :wq, для выхода без сохранения: ESC → :q!${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         vim "$config_path"
     elif command -v vi >/dev/null 2>&1; then
         echo -e "  ${YELLOW}[!]${NC} Использую vi."
         echo -e "  ${GRAY}Для сохранения: ESC → :wq, для выхода без сохранения: ESC → :q!${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         vi "$config_path"
     else
         echo -e "  ${RED}[✗]${NC} Ни один редактор не найден (nano, vim, vi)"
         echo -e "  ${GRAY}Установите один из редакторов: apt install nano или vim${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
     echo ""
     echo -e "  ${GREEN}${BOLD}[✓]${NC} Редактирование завершено"
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция обновления панели ───────────────────────────────
@@ -500,57 +482,12 @@ update_panel() {
     
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-    read -rsn1
-}
-
-# ── Функция отображения информации о панели ─────────────────
-show_panel_info() {
-    echo ""
-    echo -e "  ${NC}${BOLD}Информация о${CYAN} Telemt Panel:${NC}"
-    echo -e "  ${DIM}─────────────────────────────────────────${NC}"
-    
-    if is_panel_installed; then
-        echo -e "  ${BOLD}Панель:${NC} ${GREEN}${BOLD}Установлена${NC}"
-        
-        local version=$(get_panel_version)
-        if [ -n "$version" ]; then
-            echo -e "  ${BOLD}Версия:${NC} ${GREEN}${BOLD}${version}${NC}"
-        fi
-        
-        local port=$(get_panel_port)
-        if [ -n "$port" ]; then
-            echo -e "  ${BOLD}Порт:${NC} ${CYAN}${port}${NC}"
-        fi
-        
-        if systemctl is-active --quiet telemt-panel 2>/dev/null; then
-            echo -e "  ${BOLD}Статус:${NC} ${GREEN}${BOLD}Активна${NC}"
-        else
-            echo -e "  ${BOLD}Статус:${NC} ${RED}остановлена${NC}"
-        fi
-        
-        local config_path="/etc/telemt-panel/config.toml"
-        if [ -f "$config_path" ]; then
-            echo -e "  ${BOLD}Конфиг:${NC} ${CYAN}${config_path}${NC}"
-        fi
-        
-        local server_ip=$(get_public_ip)
-        if [ -n "$port" ] && [ -n "$server_ip" ]; then
-            echo ""
-            echo -e "  ${BOLD}Панель доступна по адресу:${NC}"
-            echo -e "  ${CYAN}http://${server_ip}:${port}${NC}"
-        fi
-    else
-        echo -e "  ${BOLD}Панель:${NC} ${RED}не установлена${NC}"
-    fi
-    
-    echo ""
-    echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Главное меню ─────────────────────────────────────────────
 while true; do
-    clear
+    clear 2>/dev/null || true
     echo ""
     echo -e "  ${BOLD}Telemt_Panel меню v0.11${NC}"
     echo -e "  ${DIM}===========================${NC}"
@@ -601,7 +538,7 @@ while true; do
     echo -e "  ${CYAN}[3]${NC}  ${BOLD}Перезапустить панель${NC}"
     echo -e "  ${CYAN}[4]${NC}  ${BOLD}Посмотреть логи панели${NC}"
     echo -e "  ${CYAN}[5]${NC}  ${BOLD}Открыть конфиг панели${NC}"
-    echo -e ""
+    echo ""
     echo -e "  ${RED}${BOLD}[0]${NC}  ${BOLD}Назад в прокси меню${NC}"
     echo ""
     
@@ -611,11 +548,15 @@ while true; do
     fi
     
     echo -en "  ${BOLD}Выбор:${NC} "
-    read -r choice
+    { read -r choice </dev/tty; } 2>/dev/null || { echo; break; }
 
     case "$choice" in
         1)
-            install_panel
+            if is_panel_installed; then
+                update_panel
+            else
+                install_panel
+            fi
             ;;
         2)
             uninstall_panel
@@ -630,7 +571,13 @@ while true; do
             edit_panel_config
             ;;
         0)
-            exec /opt/mtpr-simple/proxys/proxymenu.sh
+            if [ -f "/opt/mtpr-simple/proxys/proxymenu.sh" ]; then
+                exec bash /opt/mtpr-simple/proxys/proxymenu.sh
+            else
+                echo -e "  ${RED}[✗] Файл proxymenu.sh не найден${NC}"
+                sleep 1
+            fi
+            break
             ;;
         *)
             echo "  Неверный выбор"

@@ -4,6 +4,8 @@ install_main.sh|Полуавтоматический установщик
 
 install.sh|Главный файл установки 
 
+install_vpn.sh|Меню установки VPN (3x-ui / Remnawave)
+
 main.sh|Главное меню лаунчера
 
 proxys/proxymenu.sh|Меню выбора прокси
@@ -23,3 +25,17 @@ proxys/mtprotozig1.sh|Меню MTProtoZig
 proxys/telemt_in_docker1.sh|Установка Telemt в Docker
 
 proxy_checker.py|Проверка SNI
+
+proxys/caddy_pq.sh|Caddy как PQ-заглушка (SelfSteal)
+
+data/backup_panel.sh|Бэкап и восстановление панели
+
+data/services_menu.sh|Дополнительные сервисы (WARP, AdGuard)
+
+data/shaping.sh|Ограничение скорости (шейпинг по IPv4)
+
+data/security.sh|Безопасность (TLS-отпечатки и блокировка IP/подсетей)
+
+data/extra_menu.sh|Дополнительно (GEOIP, шейпинг, Caddy, сервисы, безопасность, бэкап)
+
+data/webconfig.txt|Шаблон WEB-конфига Telemt

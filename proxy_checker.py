@@ -7,6 +7,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Цвета ─────────────────────────────────────────────────────
@@ -124,7 +125,7 @@ def print_warning_pq():
         print(f"{YELLOW}    Установите свежую версию в /opt/openssl-3.5/bin/openssl{NC}")
         print()
 
-# ── Остальные функции (без изменений) ──────────────────────
+# ── Вспомогательный вывод и парсинг ────────────────────────
 def print_info(text):
     print(f"{BLUE}ℹ️ {text}{NC}")
 
@@ -137,13 +138,13 @@ def normalize(raw):
     t = t.split('/')[0].split('?')[0].split('#')[0].strip()
     return t
 
-def run_openssl(args):
+def run_openssl(args, stdin=b""):
     _throttle()
     env = os.environ.copy()
     try:
         proc = subprocess.run(
             [OPENSSL_BIN] + args,
-            input=b"",
+            input=stdin,
             capture_output=True,
             timeout=TIMEOUT,
             env=env,
@@ -155,21 +156,8 @@ def run_openssl(args):
         return f"ERROR: {e}"
 
 def run_openssl_full(args):
-    _throttle()
-    env = os.environ.copy()
-    try:
-        proc = subprocess.run(
-            [OPENSSL_BIN] + args,
-            input=b"Q\n".encode(),
-            capture_output=True,
-            timeout=TIMEOUT,
-            env=env,
-        )
-        return (proc.stdout + proc.stderr).decode(errors='replace')
-    except subprocess.TimeoutExpired:
-        return "TIMEOUT"
-    except Exception as e:
-        return f"ERROR: {e}"
+    """Полный вывод (без -brief); на запрос сертификата отвечаем Q."""
+    return run_openssl(args, stdin=b"Q\n")
 
 def classify_failure(output):
     """Отличает проблему клиента от вердикта о сервере.
@@ -195,6 +183,14 @@ def classify_failure(output):
     return None
 
 
+def _first_error_line(text):
+    """Первая строка вывода с alert/error — для строки «Причина»."""
+    for ln in text.splitlines():
+        if "alert" in ln or "error:" in ln:
+            return ln.strip()
+    return ""
+
+
 def render_failure(lines, output):
     """Печатает статус PQ с учётом того, ЧЬЯ это проблема."""
     verdict = classify_failure(output)
@@ -210,11 +206,7 @@ def render_failure(lines, output):
     if verdict:
         lines.append(f"  Причина: {GRAY}{verdict[1]}{NC}")
         return
-    reason = ""
-    for ln in output.splitlines():
-        if "alert" in ln or "error:" in ln:
-            reason = ln.strip()
-            break
+    reason = _first_error_line(output)
     if reason:
         lines.append(f"  Причина: {GRAY}{reason}{NC}")
 
@@ -420,7 +412,6 @@ def check_one(domain):
     
     # ── Обработка tg://proxy ссылок ──────────────────────────
     if raw_input.startswith('tg://'):
-        import urllib.parse
         parsed = urllib.parse.urlparse(raw_input)
         params = urllib.parse.parse_qs(parsed.query)
         server = params.get('server', [None])[0]
@@ -453,7 +444,7 @@ def check_one(domain):
                 result = future.result()
                 if not result.get("error", False):
                     results.append(result)
-        results.sort(key=lambda x: (not x["has_marker"] if x["pq_supported"] == False else True))
+        results.sort(key=lambda x: x["pq_supported"] or not x["has_marker"])
         lines.append(f"{CYAN}━━━ Короткая проверка по IP ━━━{NC}")
         lines.append(f"  SNI: {host}")
         
@@ -566,11 +557,7 @@ def check_one(domain):
                     lines.append(f"{GREEN}✅ Статус: поддерживается{NC}")
                 else:
                     lines.append(f"{RED}🔸 Статус: не поддерживается{NC}")
-                    reason = ""
-                    for ln in detail_pq.splitlines():
-                        if "alert" in ln or "error:" in ln:
-                            reason = ln.strip()
-                            break
+                    reason = _first_error_line(detail_pq)
                     if reason:
                         lines.append(f"  Причина: {GRAY}{reason}{NC}")
                 
@@ -736,11 +723,7 @@ def check_one(domain):
                 lines.append("")
                 lines.append(f"{YELLOW}⏱ Таймаут при обычном TLS-подключении{NC}")
             else:
-                err = ""
-                for ln in std.splitlines():
-                    if "error:" in ln or "alert" in ln:
-                        err = ln.strip()
-                        break
+                err = _first_error_line(std)
                 lines.append("")
                 lines.append(f"{RED}❌ Обычное TLS тоже не удалось{NC}")
                 if err:
@@ -804,11 +787,20 @@ def check_one(domain):
 
 def main():
     if len(sys.argv) > 1:
-        print(check_one(sys.argv[1]))
-        sys.exit(0)
+        report = check_one(sys.argv[1])
+        print(report)
+        # Честный код возврата для CLI-режима:
+        #   0 — маркер PQ-безопасности НЕ найден (всё хорошо)
+        #   1 — маркер НАЙДЕН (PQ не поддерживается, риск блокировки)
+        #   2 — вердикт не получен (пустой домен / ошибка извлечения server)
+        if "МАРКЕР: ДА" in report:
+            sys.exit(1)
+        if "Маркер: НЕТ" in report:
+            sys.exit(0)
+        sys.exit(2)
     
     while True:
-        os.system('clear' if os.name == 'posix' else 'cls')
+        os.system('clear 2>/dev/null || true' if os.name == 'posix' else 'cls')
         print("")
         print(f"  {BOLD}{CYAN}🔍 ПРОВЕРКА ПРОКСИ,ДОМЕНА,АЙПИ НА ВАЛИД ЧЕРЕЗ TLS И PQ-БЕЗОПАСНОСТЬ v1.16 {NC}")
         print(f"  {DIM}═════════════════════════════════════════════════{NC}")

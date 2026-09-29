@@ -11,7 +11,7 @@ fi
 # ── Логирование ─────────────────────────────────────────────
 log_info()    { echo -e "  ${BLUE}[i]${NC} $1"; }
 log_success() { echo -e "  ${GREEN}[✓]${NC} $1"; }
-log_warn()    { echo -e "  ${YELLOW}[!]${NC} $1" >&2; }
+log_warning() { echo -e "  ${YELLOW}[!]${NC} $1" >&2; }
 log_error()   { echo -e "  ${RED}[✗]${NC} $1" >&2; }
 
 # ── Путь к файлу настроек  ─────────────
@@ -86,7 +86,7 @@ MEKO_ORIG_DEFAULT_QDISC='${MEKO_ORIG_DEFAULT_QDISC:-}'
 MEKO_ORIG_TCP_CONGESTION='${MEKO_ORIG_TCP_CONGESTION:-}'
 EOF
     # Сохраняем дополнительные правила, только если они есть
-    if [ -n "$EXTRA_RULES_COUNT" ] && [ "$EXTRA_RULES_COUNT" -gt 0 ]; then
+    if [[ "${EXTRA_RULES_COUNT:-0}" =~ ^[0-9]+$ ]] && [ "$EXTRA_RULES_COUNT" -gt 0 ]; then
         for _i in $(seq 1 "$EXTRA_RULES_COUNT"); do
             cat >> "$SETTINGS_FILE" << EOF
 EXTRA_RULES_${_i}_PORT='${EXTRA_RULES_PORT[$_i]:-}'
@@ -383,7 +383,7 @@ zapret2_download_bundle() {
         elif [ -f "${_luasrc}/${_name}.lua.gz" ]; then
             cp -f "${_luasrc}/${_name}.lua.gz" "${ZAPRET2_LUA_DIR}/"
         else
-            log_warn "Lua файл ${_name}.lua не найден"
+            log_warning "Lua файл ${_name}.lua не найден"
         fi
     done
 
@@ -672,11 +672,11 @@ detect_network_mode() {
     fi
 
     command -v docker >/dev/null 2>&1 || {
-        [ "$DETECTED_NETWORK_MODE" = "bridge" ] || log_warn "Docker не найден — режим сети: host"
+        [ "$DETECTED_NETWORK_MODE" = "bridge" ] || log_warning "Docker не найден — режим сети: host"
         return 0
     }
     docker info >/dev/null 2>&1 || {
-        [ "$DETECTED_NETWORK_MODE" = "bridge" ] || log_warn "Docker недоступен — режим сети: host"
+        [ "$DETECTED_NETWORK_MODE" = "bridge" ] || log_warning "Docker недоступен — режим сети: host"
         return 0
     }
 
@@ -726,7 +726,7 @@ zapret2_apply_nft() {
                 _saddr_match="ip saddr ${_cip} "
                 log_info "Zapret2 bridge/precise: IP контейнера ${_cip}"
             else
-                log_warn "Zapret2 bridge/precise: IP контейнера не определён, правила будут без ip daddr/saddr"
+                log_warning "Zapret2 bridge/precise: IP контейнера не определён, правила будут без ip daddr/saddr"
             fi
         fi
 
@@ -893,13 +893,13 @@ zapret2_check_wscale() {
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_settings
                 zapret2_update_config
-            # режим "ask" — интерактивное подтверждение (сейчас не используется: вызовы только false/auto)
+            # режим "ask" — интерактивное подтверждение (вызовы только show/auto)
             elif [ "$_mode" = "ask" ]; then
                 echo ""
                 echo -e "  ${BOLD}Необходимо изменить win ACK: ${_current_win_ack} → ${_win_ack_rec}${NC}"
                 echo -e "  ${DIM}(реальное окно: ${_current_real} → ${_real_win} байт)${NC}"
                 echo -en "  Применить? [Y/n]: "
-                local _yn; read -r _yn </dev/tty
+                local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
                 if [[ ! "$_yn" =~ ^[nN]$ ]]; then
                     ZAPRET2_WIN_ACK="$_win_ack_rec"
                     save_settings
@@ -916,13 +916,13 @@ zapret2_check_wscale() {
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_settings
                 zapret2_update_config
-            # режим "ask" — интерактивная оптимизация (сейчас не используется: вызовы только false/auto)
+            # режим "ask" — интерактивная оптимизация (вызовы только show/auto)
             elif [ "$_mode" = "ask" ]; then
                 echo ""
                 echo -e "  ${DIM}Текущее значение работает, но можно оптимизировать:${NC}"
                 echo -e "  ${DIM}win ACK ${_current_win_ack} (${_current_real} байт) → ${_win_ack_rec} (${_real_win} байт)${NC}"
                 echo -en "  Оптимизировать? [y/N]: "
-                local _yn; read -r _yn </dev/tty
+                local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
                 if [[ "$_yn" =~ ^[yY]$ ]]; then
                     ZAPRET2_WIN_ACK="$_win_ack_rec"
                     save_settings
@@ -953,14 +953,14 @@ zapret2_install() {
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ -x "$ZAPRET2_BIN" ]; then
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _yn; read -r _yn
+        local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
         [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
     fi
 
     # ── Запрос порта ──────────────────────────────────────────
     echo ""
     echo -en "  ${NC}${BOLD}Введите порт для Zapret2 fix ${GREEN}${BOLD}(По умолчанию Enter - 443 порт)${NC}${BOLD}:${NC} "
-    local _user_port; read -r _user_port
+    local _user_port; { read -r _user_port </dev/tty; } 2>/dev/null || true
     if [ -z "$_user_port" ]; then
         _user_port="443"
     elif ! [[ "$_user_port" =~ ^[0-9]+$ ]] || [ "$_user_port" -lt 1 ] || [ "$_user_port" -gt 65535 ]; then
@@ -972,7 +972,7 @@ zapret2_install() {
     log_info "Порт установлен: ${SERVER_PORT}"
 
     echo -en "  ${BOLD}Скачать и установить zapret2 bundle? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
 
     zapret2_download_bundle || return 1
@@ -992,25 +992,25 @@ zapret2_install() {
         echo -e "  ${DIM}Использование обоих одновременно не рекомендуется.${NC}"
         echo ""
         echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
-        local _yn_syn; read -r _yn_syn
+        local _yn_syn; { read -r _yn_syn </dev/tty; } 2>/dev/null || true
         if [[ ! "$_yn_syn" =~ ^[nN]$ ]]; then
             if declare -f remove_syn_fix >/dev/null 2>&1; then
                 if remove_syn_fix; then
                     log_success "SYN limiter отключён"
                 else
-                    log_warn "Не удалось отключить SYN limiter — возможен конфликт"
+                    log_warning "Не удалось отключить SYN limiter — возможен конфликт"
                     _had_limiter="false"
                     _had_limiter_service="false"
                 fi
             else
-                log_warn "remove_syn_fix недоступна — SYN limiter не отключён, возможен конфликт"
+                log_warning "remove_syn_fix недоступна — SYN limiter не отключён, возможен конфликт"
                 _had_limiter="false"
                 _had_limiter_service="false"
             fi
         else
             _had_limiter="false"
             _had_limiter_service="false"
-            log_warn "SYN limiter оставлен — возможны конфликты"
+            log_warning "SYN limiter оставлен — возможны конфликты"
         fi
     fi
 
@@ -1031,7 +1031,7 @@ zapret2_install() {
         [ -z "$_new_q" ] && _new_q=$(zapret2_find_free_queue 201 249)
 
         if [ -n "$_new_q" ]; then
-            log_warn "NFQUEUE ${_old_q} уже занята"
+            log_warning "NFQUEUE ${_old_q} уже занята"
             ZAPRET2_QNUM="$_new_q"
             save_settings
             log_success "Выбрана свободная очередь: ${ZAPRET2_QNUM}"
@@ -1046,15 +1046,15 @@ zapret2_install() {
     zapret2_write_service
 
     if ! zapret2_start; then
-        log_warn "zapret2 не запустился — выполняю откат"
+        log_warning "zapret2 не запустился — выполняю откат"
         zapret2_cleanup_failed_install || true
 
         if [ "${_had_limiter:-false}" = "true" ]; then
             log_info "Возвращаю SYN limiter..."
             if declare -f install_nft_auto >/dev/null 2>&1; then
-                install_nft_auto "${_limiter_ports:-443}" || log_warn "Не удалось вернуть SYN limiter"
+                install_nft_auto "${_limiter_ports:-443}" || log_warning "Не удалось вернуть SYN limiter"
             else
-                log_warn "install_nft_auto недоступна — SYN limiter не возвращён"
+                log_warning "install_nft_auto недоступна — SYN limiter не возвращён"
             fi
         fi
 
@@ -1069,11 +1069,11 @@ zapret2_install() {
     if systemctl is-enabled "$ZAPRET2_SERVICE" >/dev/null 2>&1; then
         log_success "Автозапуск ${ZAPRET2_SERVICE} включён"
     else
-        log_warn "Автозапуск ${ZAPRET2_SERVICE} не включился"
+        log_warning "Автозапуск ${ZAPRET2_SERVICE} не включился"
     fi
 
     # проверка wscale
-    zapret2_check_wscale "false"
+    zapret2_check_wscale "show"
 
     echo ""
     log_success "Zapret2 MTProto fix установлен и запущен"
@@ -1105,7 +1105,7 @@ zapret2_remove() {
     echo -e "  ${DIM}- Директория ${ZAPRET2_DIR}${NC}"
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
-    local _yn; read -r _yn
+    local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
     [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
 
     zapret2_stop
@@ -1127,7 +1127,7 @@ zapret2_remove() {
 # ── Обновление конфигурации Zapret2 (пересоздаёт службу и NFT) ──
 zapret2_update_config() {
     if [ "${ZAPRET2_APPLIED:-false}" != "true" ]; then
-        log_warn "Zapret2 не установлен"
+        log_warning "Zapret2 не установлен"
         return 1
     fi
     zapret2_write_conf
@@ -1149,7 +1149,7 @@ zapret2_update_config() {
 # ── Меню настроек Zapret2 ────────────────────────────────────
 show_zapret2_settings_menu() {
     while true; do
-        clear
+        clear 2>/dev/null || true
         echo -e "  ${BOLD}Настройки Zapret2 MTProto fix${NC}"
         echo ""
         echo -e "  ${DIM}Изменение параметров автоматически перезаписывает конфиг и Lua,${NC}"
@@ -1168,15 +1168,15 @@ show_zapret2_settings_menu() {
         echo -e "  ${DIM}[0]${NC} вернуться"
         echo ""
         echo -en "  Выбор: "
-        local _choice; read -r _choice </dev/tty
+        local _choice; { read -r _choice </dev/tty; } 2>/dev/null || true
         case "$_choice" in
             1)
                 echo -en "  out-range [${ZAPRET2_OUT_RANGE}]: "
-                local _v; read -r _v </dev/tty
+                local _v; { read -r _v </dev/tty; } 2>/dev/null || true
                 [ -n "$_v" ] && { ZAPRET2_OUT_RANGE="$_v"; save_settings; zapret2_update_config; } ;;
             2)
                 echo -en "  split len [${ZAPRET2_SPLIT_LEN}]: "
-                local _v; read -r _v </dev/tty
+                local _v; { read -r _v </dev/tty; } 2>/dev/null || true
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 50 ] && [ "$_v" -le 1000 ]; then
                     ZAPRET2_SPLIT_LEN="$_v"; save_settings; zapret2_update_config
                 elif [ -n "$_v" ]; then
@@ -1184,7 +1184,7 @@ show_zapret2_settings_menu() {
                 fi ;;
             3)
                 echo -en "  win SYN+ACK [${ZAPRET2_WIN_SYNACK}]: "
-                local _v; read -r _v </dev/tty
+                local _v; { read -r _v </dev/tty; } 2>/dev/null || true
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 10 ] && [ "$_v" -le 65535 ]; then
                     ZAPRET2_WIN_SYNACK="$_v"; save_settings; zapret2_update_config
                 elif [ -n "$_v" ]; then
@@ -1192,7 +1192,7 @@ show_zapret2_settings_menu() {
                 fi ;;
             4)
                 echo -en "  win ACK [${ZAPRET2_WIN_ACK}]: "
-                local _v; read -r _v </dev/tty
+                local _v; { read -r _v </dev/tty; } 2>/dev/null || true
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 65535 ]; then
                     ZAPRET2_WIN_ACK="$_v"; save_settings; zapret2_update_config
                 elif [ -n "$_v" ]; then
@@ -1200,11 +1200,11 @@ show_zapret2_settings_menu() {
                 fi ;;
             5)
                 echo -en "  in-range [${ZAPRET2_IN_RANGE}]: "
-                local _v; read -r _v </dev/tty
+                local _v; { read -r _v </dev/tty; } 2>/dev/null || true
                 [ -n "$_v" ] && { ZAPRET2_IN_RANGE="$_v"; save_settings; zapret2_update_config; } ;;
             6)
                 echo -en "  NFQUEUE num [${ZAPRET2_QNUM}]: "
-                local _v; read -r _v </dev/tty
+                local _v; { read -r _v </dev/tty; } 2>/dev/null || true
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 0 ] && [ "$_v" -le 65535 ]; then
                     ZAPRET2_QNUM="$_v"; save_settings; zapret2_update_config
                 elif [ -n "$_v" ]; then
@@ -1212,7 +1212,7 @@ show_zapret2_settings_menu() {
                 fi ;;
             7)
                 echo -en "  fwmark [${ZAPRET2_FWMARK}]: "
-                local _v; read -r _v </dev/tty
+                local _v; { read -r _v </dev/tty; } 2>/dev/null || true
                 if [[ "$_v" =~ ^0x[0-9a-fA-F]+$ ]]; then
                     ZAPRET2_FWMARK="$_v"; save_settings; zapret2_update_config
                 elif [ -n "$_v" ]; then
@@ -1221,25 +1221,25 @@ show_zapret2_settings_menu() {
             8)
                 if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
                     echo -en "  Выключить debug? [Y/n]: "
-                    local _yn; read -r _yn </dev/tty
+                    local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
                     [[ ! "$_yn" =~ ^[nN]$ ]] && { ZAPRET2_DEBUG="false"; save_settings; zapret2_update_config; }
                 else
                     echo -e "  ${YELLOW}Debug лог будет записываться в ${ZAPRET2_DEBUG_LOG}${NC}"
                     echo -en "  Включить debug? [Y/n]: "
-                    local _yn; read -r _yn </dev/tty
+                    local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
                     [[ ! "$_yn" =~ ^[nN]$ ]] && { ZAPRET2_DEBUG="true"; save_settings; zapret2_update_config; }
                 fi ;;
             0|"") return ;;
-            *) log_warn "Неверный выбор: ${_choice}" ;;
+            *) log_warning "Неверный выбор: ${_choice}" ;;
         esac
-        echo ""; read -rsn1 -p "  Нажмите любую клавишу для возврата в меню" </dev/tty
+        echo ""; echo -en "  Нажмите любую клавишу для возврата в меню"; { read -rsn1 </dev/tty; } 2>/dev/null || true
     done
 }
 
 # ── Главное меню Zapret2 ─────────────────────────────────────
 show_zapret2_menu() {
     while true; do
-        clear
+        clear 2>/dev/null || true
         echo ""
         echo -e "  ${NC}${BOLD}Меню v0.31 | ${CYAN}${BOLD}V4.2 Zapret2 MTProto fix${NC}"
         echo -e "  ${DIM}══════════════════════════════"
@@ -1296,7 +1296,7 @@ show_zapret2_menu() {
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         echo -en "  Выбор: "
-        local _choice; read -r _choice </dev/tty
+        local _choice; { read -r _choice </dev/tty; } 2>/dev/null || true
         case "$_choice" in
             1) zapret2_install ;;
             2)
@@ -1341,7 +1341,7 @@ show_zapret2_menu() {
             6)
                 if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
                     echo ""
-                    journalctl -u "$ZAPRET2_SERVICE" -n 30 --no-pager 2>/dev/null || log_warn "Логов нет"
+                    journalctl -u "$ZAPRET2_SERVICE" -n 30 --no-pager 2>/dev/null || log_warning "Логов нет"
                 else
                     log_info "Zapret2 не установлен — используйте [1]"
                 fi ;;
@@ -1383,7 +1383,7 @@ show_zapret2_menu() {
                     echo -e "    fwmark:      0x40000000"
                     echo ""
                     echo -en "  ${BOLD}Сбросить настройки и перезапустить? [y/N]:${NC} "
-                    local _yn; read -r _yn </dev/tty
+                    local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
                     if [[ "$_yn" =~ ^[yY]$ ]]; then
                         ZAPRET2_OUT_RANGE="a"
                         ZAPRET2_IN_RANGE="a"
@@ -1407,7 +1407,7 @@ show_zapret2_menu() {
                 elif zapret2_has_residue; then
                     echo ""
                     echo -en "  ${BOLD}Очистить следы неудачной установки zapret2? [Y/n]:${NC} "
-                    local _yn; read -r _yn </dev/tty
+                    local _yn; { read -r _yn </dev/tty; } 2>/dev/null || true
                     if [[ ! "$_yn" =~ ^[nN]$ ]]; then
                         zapret2_cleanup_failed_install
                     else
@@ -1417,9 +1417,9 @@ show_zapret2_menu() {
                     log_info "Ничего не обнаружено"
                 fi ;;
             0|"") return ;;
-            *) log_warn "Неверный выбор: ${_choice}" ;;
+            *) log_warning "Неверный выбор: ${_choice}" ;;
         esac
-        echo ""; read -rsn1 -p "  Нажмите любую клавишу для возврата в меню" </dev/tty
+        echo ""; echo -en "  Нажмите любую клавишу для возврата в меню"; { read -rsn1 </dev/tty; } 2>/dev/null || true
     done
 }
 
@@ -1486,9 +1486,9 @@ zapret2_install_auto() {
     if [ "${NFT_SERVICE_ENABLED:-false}" = "true" ] || nft list table inet "${NFT_TABLE:-telemt_limit}" &>/dev/null 2>&1; then
         log_info "Отключаем SYN limiter..."
         if declare -f remove_syn_fix >/dev/null 2>&1; then
-            remove_syn_fix || log_warn "Не удалось отключить SYN limiter"
+            remove_syn_fix || log_warning "Не удалось отключить SYN limiter"
         else
-            log_warn "remove_syn_fix недоступна — SYN limiter не отключён, возможен конфликт"
+            log_warning "remove_syn_fix недоступна — SYN limiter не отключён, возможен конфликт"
         fi
     fi
 
@@ -1501,7 +1501,7 @@ zapret2_install_auto() {
             save_settings
             log_info "Выбрана свободная очередь: $ZAPRET2_QNUM"
         else
-            log_warn "Не найдена свободная очередь, используем $ZAPRET2_QNUM (может быть конфликт)"
+            log_warning "Не найдена свободная очередь, используем $ZAPRET2_QNUM (может быть конфликт)"
         fi
     fi
 

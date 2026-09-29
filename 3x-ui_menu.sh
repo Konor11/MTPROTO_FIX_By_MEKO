@@ -1,23 +1,28 @@
 #!/bin/bash
 # 3x-ui_menu.sh – Меню управления панелью 3x-ui
 
-set -e
+set -euo pipefail
 
 # ── Цвета ─────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-GRAY='\033[0;90m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+if [ -t 1 ]; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'; CYAN='\033[0;36m'; GRAY='\033[0;90m'
+    BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; GRAY=''
+    BOLD=''; DIM=''; NC=''
+fi
 
 log_info() { echo -e "  ${BLUE}[i]${NC} $1"; }
 log_success() { echo -e "  ${GREEN}[✓]${NC} $1"; }
 log_error() { echo -e "  ${RED}[✗]${NC} $1" >&2; }
 log_warning() { echo -e "  ${YELLOW}[!]${NC} $1"; }
+
+# ── Проверка root ────────────────────────────────────────────
+if [ "$(id -u)" -ne 0 ]; then
+    echo -e "${RED}[✗]${NC} Запустите от root" >&2
+    exit 1
+fi
 
 # ── URL-ы установщика 3x-ui-pro ──────────────────────────────
 XUI_INSTALLER_URL="https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-latest.sh"
@@ -26,9 +31,11 @@ XUI_PATCH_URL="https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-pat
 # ── Внешний IPv4 сервера ─────────────────────────────────────
 get_public_ip() {
     local ip
-    ip=$(ip route get 8.8.8.8 2>/dev/null | grep -Po -- 'src \K\S*' | head -1)
+    # pipefail активен: без `|| true` неудачный `ip route get` (нет маршрута)
+    # сделал бы пайп фатальным и убил бы fallback на icanhazip ниже.
+    ip=$(ip route get 8.8.8.8 2>/dev/null | grep -Po -- 'src \K\S*' | head -1 || true)
     if ! [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
-        ip=$(curl -4 -fsS --max-time 10 https://ipv4.icanhazip.com 2>/dev/null | tr -d '[:space:]')
+        ip=$(curl -4 -fsS --max-time 10 https://ipv4.icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)
     fi
     if [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
         echo "$ip"
@@ -38,7 +45,7 @@ get_public_ip() {
 # ── Пауза «нажмите любую клавишу» ────────────────────────────
 pause_key() {
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-    read -rsn1 </dev/tty 2>/dev/null || true
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Ввод домена (пустой ввод = значение по умолчанию) ────────
@@ -46,8 +53,8 @@ pause_key() {
 #  вызывающий код мог забрать его через $(ask_domain ...).
 ask_domain() {
     local prompt="$1" default="$2" value=""
-    echo -en "  ${BOLD}${prompt}${NC} ${DIM}[${default}]${NC}: " >/dev/tty
-    read -r value </dev/tty 2>/dev/null || value=""
+    { echo -en "  ${BOLD}${prompt}${NC} ${DIM}[${default}]${NC}: " >/dev/tty; } 2>/dev/null || true
+    { read -r value </dev/tty; } 2>/dev/null || value=""
     value="${value//[[:space:]]/}"
     if [ -n "$value" ]; then
         echo "$value"
@@ -59,15 +66,9 @@ ask_domain() {
 # ── Проверка, что домен указывает A-записью на наш IP ────────
 domain_points_here() {
     local d="$1" ip="$2" a
-    a=$(getent ahostsv4 "$d" 2>/dev/null | awk 'NR==1{print $1}')
+    a=$(getent ahostsv4 "$d" 2>/dev/null | awk 'NR==1{print $1}' || true)
     [ "$a" = "$ip" ]
 }
-
-# ── Проверка root ────────────────────────────────────────────
-if [ "$(id -u)" -ne 0 ]; then
-    echo -e "${RED}[✗]${NC} Запустите от root" >&2
-    exit 1
-fi
 
 # ── Проверка установки 3x-ui ────────────────────────────────
 is_3xui_installed() {
@@ -108,7 +109,7 @@ install_3xui() {
             return 1
             ;;
     esac
-    if grep -m1 'model name' /proc/cpuinfo 2>/dev/null | grep -qi 'QEMU'; then
+    if grep -qiE 'model name.*QEMU' /proc/cpuinfo 2>/dev/null; then
         log_error "Обнаружен эмулированный QEMU-процессор — установщик 3x-ui-pro откажется работать."
         log_error "Попросите хостера включить host-passthrough (host CPU)."
         pause_key
@@ -120,15 +121,15 @@ install_3xui() {
     #  держит MTProto на 443), nginx не стартует и патч панели не применится —
     #  ровно это и наблюдалось вживую. Предупреждаем заранее.
     local holder443=""
-    if command -v ss >/dev/null 2>&1 && ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE '[:.]443$'; then
-        holder443=$(ss -tlnpH 2>/dev/null | awk '$4 ~ /[:.]443$/ {print $NF}' | head -1)
+    if command -v ss >/dev/null 2>&1 && [ -n "$(ss -tlnH 2>/dev/null | awk '$4 ~ /[:.]443$/ {print $4; exit}')" ]; then
+        holder443=$(ss -tlnpH 2>/dev/null | awk '$4 ~ /[:.]443$/ {print $NF; exit}' || true)
         log_warning "Порт 443 уже занят${holder443:+ (${holder443})}!"
         log_warning "3x-ui-pro поднимает nginx+SSL на 443: пока порт занят, панель не установится полностью."
         log_warning "Освободите порт (например: systemctl stop telemt) и повторите установку."
-        if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        if { : </dev/tty; } 2>/dev/null; then
             echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
             local c443=""
-            read -r c443 </dev/tty 2>/dev/null || c443=""
+            { read -r c443 </dev/tty; } 2>/dev/null || c443=""
             if [[ ! "$c443" =~ ^[yY]$ ]]; then
                 log_info "Установка отменена. Освободите порт 443 и запустите снова."
                 return 0
@@ -143,7 +144,7 @@ install_3xui() {
     log_info "Проверка блокировки менеджера пакетов apt..."
     local wait_seconds=0
     local max_wait=120
-    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    while command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
         if [ $wait_seconds -ge $max_wait ]; then
             log_error "Блокировка apt не снята за $max_wait секунд."
             log_error "Попробуйте остановить unattended-upgrades вручную: sudo systemctl stop unattended-upgrades"
@@ -173,7 +174,7 @@ install_3xui() {
     log_info "Для установки нужны два разных домена с A-записью на IP ${BOLD}$IP${NC}"
     log_info "Пустое поле = бесплатный домен sslip.io (DNS уже настроен, сертификат Let's Encrypt)."
     echo ""
-    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    if { : </dev/tty; } 2>/dev/null; then
         PANEL_DOMAIN=$(ask_domain "Домен панели:" "$IP.sslip.io")
         REALITY_DOMAIN=$(ask_domain "Домен REALITY (другой):" "reality.$IP.sslip.io")
     else
@@ -200,7 +201,7 @@ install_3xui() {
 
     # ── Установка ───────────────────────────────────────────
     local installer
-    installer=$(mktemp /tmp/x-ui-latest.XXXXXX.sh)
+    installer=$(mktemp /tmp/x-ui-latest.XXXXXX.sh) || { log_error "Не удалось создать временный файл (mktemp)"; return 1; }
     log_info "Загрузка установщика 3x-ui-pro..."
     if ! curl -fsSL "$XUI_INSTALLER_URL" -o "$installer" || [ ! -s "$installer" ]; then
         log_error "Не удалось загрузить установщик 3x-ui-pro."
@@ -212,7 +213,7 @@ install_3xui() {
     log_info "Запуск установки 3x-ui (это может занять несколько минут)..."
     echo ""
     local rc=0
-    if [ -r /dev/tty ]; then
+    if { : </dev/tty; } 2>/dev/null; then
         bash "$installer" -install y -subdomain "$PANEL_DOMAIN" -reality_domain "$REALITY_DOMAIN" </dev/tty || rc=$?
     else
         bash "$installer" -install y -subdomain "$PANEL_DOMAIN" -reality_domain "$REALITY_DOMAIN" </dev/null || rc=$?
@@ -238,7 +239,7 @@ install_3xui() {
     # ── Применение патча ────────────────────────────────────
     log_info "Применение патча 3x-ui..."
     wait_seconds=0
-    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    while command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
         if [ $wait_seconds -ge $max_wait ]; then
             log_warning "Блокировка apt не снята, патч может не примениться."
             break
@@ -249,7 +250,7 @@ install_3xui() {
     done
 
     local patcher
-    patcher=$(mktemp /tmp/x-ui-patch.XXXXXX.sh)
+    patcher=$(mktemp /tmp/x-ui-patch.XXXXXX.sh) || { log_error "Не удалось создать временный файл (mktemp)"; return 1; }
     rc=0
     if ! curl -fsSL "$XUI_PATCH_URL" -o "$patcher" || [ ! -s "$patcher" ]; then
         rc=1
@@ -277,7 +278,7 @@ run_xui_cmd() {
         echo ""
         log_error "Панель 3x-ui не установлена. Сначала выполните установку (пункт 1)."
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1 </dev/tty 2>/dev/null || true
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
@@ -295,12 +296,12 @@ run_xui_cmd() {
     esac
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1 </dev/tty 2>/dev/null || true
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Главное меню 3x-ui ────────────────────────────────────────
 while true; do
-    clear 2>/dev/null || printf '\033[2J\033[H'
+    if [ -t 1 ]; then clear 2>/dev/null || printf '\033[2J\033[H'; fi
     echo ""
     echo -e "  ${CYAN}${BOLD}⚙️ ${NC}${BOLD}Meko Manager ${CYAN}${BOLD}| ${NC}${BOLD}Меню 3x-ui ${CYAN}${BOLD}v1.97 ${CYAN}${BOLD}⚙️${NC}"
     echo -e "  ${BOLD}${DIM}═════════════════════════════════════════════════${NC}"
@@ -338,10 +339,10 @@ while true; do
     echo ""
     echo -en "  ${NC}${BOLD}Выбор:${NC} "
 
-    if ! read -r choice </dev/tty 2>/dev/null; then
+    if ! { read -r choice </dev/tty; } 2>/dev/null; then
         echo ""
-        echo -e "  ${RED}[✗]${NC} Не удалось прочитать ввод."
-        exit 1
+        log_warning "Нет доступа к терминалу — выход из меню 3x-ui."
+        exit 0
     fi
 
     case "$choice" in
@@ -381,7 +382,7 @@ while true; do
                 log_warning "Вы уверены, что хотите удалить панель 3x-ui и Xray?"
                 echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
                 confirm=""
-                read -r confirm </dev/tty 2>/dev/null || confirm=""
+                { read -r confirm </dev/tty; } 2>/dev/null || confirm=""
                 if [[ "$confirm" =~ ^[yY]$ ]]; then
                     log_info "Запуск удаления..."
                     # Автоматически подтверждаем второй запрос
@@ -394,12 +395,12 @@ while true; do
                     log_info "Удаление отменено."
                 fi
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-                read -rsn1 </dev/tty 2>/dev/null || true
+                { read -rsn1 </dev/tty; } 2>/dev/null || true
             else
                 echo ""
                 log_error "Панель не установлена."
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-                read -rsn1 </dev/tty 2>/dev/null || true
+                { read -rsn1 </dev/tty; } 2>/dev/null || true
             fi
             ;;
         0)
@@ -411,7 +412,7 @@ while true; do
             echo ""
             log_warning "Неверный выбор."
             echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-            read -rsn1 </dev/tty 2>/dev/null || true
+            { read -rsn1 </dev/tty; } 2>/dev/null || true
             ;;
     esac
 done

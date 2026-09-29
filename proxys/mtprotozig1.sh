@@ -12,7 +12,7 @@ fetch_and_run() {
     local url="$1"; shift
     local tmp rc=0
     tmp=$(mktemp) || return 1
-    if ! curl -fsSL "$url" -o "$tmp"; then
+    if ! curl -fsSL --max-time 60 "$url" -o "$tmp"; then
         rm -f "$tmp"
         return 1
     fi
@@ -109,7 +109,7 @@ install_zig_cli() {
     fi
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция установки прокси ────────────────────────────────
@@ -120,11 +120,11 @@ install_proxy() {
     echo -e "  ${BOLD}Хотите установить с параметрами по умолчанию?${NC}"
     echo ""
     echo -e "  Команда:"
-    echo -e "  ${CYAN}sudo mtbuddy install --port 443 --domain ozon.ru --middle-proxy --no-tcpmss --no-masking --yes${NC}"
+    echo -e "  ${CYAN}sudo mtbuddy install --port 443 --domain rutube.ru --middle-proxy --no-tcpmss --no-masking --yes${NC}"
     echo ""
     echo -e "  ${BOLD}Параметры:${NC}"
     echo -e "  • Порт: ${GREEN}443${NC}"
-    echo -e "  • TLS домен: ${GREEN}ozon.ru${NC}"
+    echo -e "  • TLS домен: ${GREEN}rutube.ru${NC}"
     echo -e "  • MiddleProxy: ${GREEN}включён${NC}"
     echo -e "  • MSS: ${GREEN}отключён${NC}"
     echo ""
@@ -132,7 +132,7 @@ install_proxy() {
     echo -e "  ${DIM}Например: sudo mtbuddy install --port 8443 --domain example.com --middle-proxy --no-tcpmss --yes${NC}"
     echo ""
     echo -en "  ${BOLD}Ввод ${DIM} (Enter/y - установить с параметрами по умолчанию, n - назад, или введите свою команду)${NC}${BOLD}:${NC} "
-    read -r choice
+    { read -r choice </dev/tty; } 2>/dev/null || return 0
 
     case "$choice" in
         ""|y|Y)
@@ -154,11 +154,20 @@ install_proxy() {
             return 0
             ;;
         *)
-            # Пользователь ввёл свою команду, выполняем её
+            # Пользователь ввёл свою команду. Без динамического исполнения
+            # строки: разбираем её на слова и запускаем напрямую —
+            # метасимволы шелла не исполняются.
             echo ""
             echo -e "  ${BLUE}[i]${NC} Выполнение: $choice"
             echo ""
-            if eval "$choice"; then
+            read -r -a _choice_argv <<< "$choice"
+            _choice_base="${_choice_argv[0]:-}"
+            if [ "$_choice_base" = "sudo" ]; then
+                _choice_base="${_choice_argv[1]:-}"
+            fi
+            if [ "$_choice_base" != "mtbuddy" ]; then
+                echo -e "  ${RED}[✗]${NC} Разрешены только команды mtbuddy (получено: ${_choice_base:-пусто})"
+            elif "${_choice_argv[@]}"; then
                 echo ""
                 echo -e "  ${GREEN}[✓]${NC} Команда выполнена успешно"
             else
@@ -169,7 +178,7 @@ install_proxy() {
     esac
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция открытия конфига ────────────────────────────────
@@ -182,7 +191,7 @@ edit_config() {
         echo -e "  ${GRAY}Возможно, прокси ещё не установлен${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
@@ -194,7 +203,7 @@ edit_config() {
         echo -e "  ${GRAY}После редактирования сохраните файл (Ctrl+O) и закройте (Ctrl+X)${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         sudo nano "$config_path"
     elif command -v vim >/dev/null 2>&1; then
         echo -e "  ${YELLOW}[!]${NC} nano не установлен. Используем vim для открытия файла."
@@ -202,28 +211,28 @@ edit_config() {
         echo -e "  ${GRAY}Для выхода без сохранения: ESC, затем :q! и Enter${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         sudo vim "$config_path"
     elif command -v vi >/dev/null 2>&1; then
         echo -e "  ${YELLOW}[!]${NC} Использую vi."
         echo -e "  ${GRAY}Для сохранения: нажмите ESC, затем введите :wq и Enter${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         sudo vi "$config_path"
     else
         echo -e "  ${RED}[✗]${NC} Ни один редактор не найден (nano, vim, vi)"
         echo -e "  ${GRAY}Установите один из редакторов: apt install nano или vim${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
     echo ""
     echo -e "  ${GREEN}[✓]${NC} Редактирование завершено"
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция перезапуска прокси ──────────────────────────────
@@ -239,7 +248,7 @@ restart_proxy() {
     fi
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция просмотра логов ──────────────────────────────────
@@ -248,11 +257,11 @@ view_logs() {
     echo -e "  ${BLUE}[i]${NC} Просмотр логов MTProtoZig (Ctrl+C для выхода)..."
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
     sudo journalctl -u mtproto-proxy -f
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция удаления прокси ──────────────────────────────────
@@ -268,13 +277,13 @@ purge_proxy() {
     echo -e "  ${YELLOW}[!]${NC} Это действие нельзя отменить!"
     echo -en "  ${BOLD}Продолжить удаление? [y/N]:${NC} "
     local confirm
-    read -r confirm
+    { read -r confirm </dev/tty; } 2>/dev/null || true
 
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
         echo -e "  ${GRAY}Удаление отменено${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
 
@@ -290,12 +299,12 @@ purge_proxy() {
     fi
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Главное меню ─────────────────────────────────────────────
 while true; do
-    clear
+    clear 2>/dev/null || true
     echo ""
     echo -e "  ${BOLD}MTProtoZig меню v0.25${NC}"
     echo -e "  ${DIM}===========================${NC}"
@@ -351,7 +360,7 @@ while true; do
     fi
 
     echo -en "  ${BOLD}Выбор:${NC} "
-    read -r choice
+    { read -r choice </dev/tty; } 2>/dev/null || { echo; break; }
 
     case "$choice" in
         1)
@@ -373,7 +382,13 @@ while true; do
             purge_proxy
             ;;
         0)
-            exec /opt/mtpr-simple/proxys/proxymenu.sh
+            if [ -f "/opt/mtpr-simple/proxys/proxymenu.sh" ]; then
+                exec bash /opt/mtpr-simple/proxys/proxymenu.sh
+            else
+                echo -e "  ${RED}[✗] Файл proxymenu.sh не найден${NC}"
+                sleep 1
+            fi
+            break
             ;;
         *)
             echo "  Неверный выбор"

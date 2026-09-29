@@ -13,10 +13,10 @@ REMOTE_PORT="$3"
 
 # ── Функция выполнения команд через SSH ─────────────────────
 ssh_exec() {
-    ssh -p "$REMOTE_PORT" -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$REMOTE_USER@$REMOTE_IP" "$1" 2>/dev/null
+    ssh -p "$REMOTE_PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 "$REMOTE_USER@$REMOTE_IP" "$1" 2>/dev/null
 }
 ssh_interactive() {
-    ssh -t -p "$REMOTE_PORT" -o StrictHostKeyChecking=no "$REMOTE_USER@$REMOTE_IP" "$1"
+    ssh -t -p "$REMOTE_PORT" -o StrictHostKeyChecking=accept-new "$REMOTE_USER@$REMOTE_IP" "$1"
 }
 
 # ── Цвета ─────────────────────────────────────────────────────
@@ -42,13 +42,11 @@ PORT_FILE="/opt/mtpr-simple/port"
 # ── Название кастомной цепочки iptables ─────────────────────
 SYNFIX_CHAIN="MTPR_SYNFIX"
 
-# ── Функция обрезки пробелов ──────────────────────────────
-trim() {
-    local var="$1"
-    var="${var#"${var%%[![:space:]]*}"}"
-    var="${var%"${var##*[![:space:]]}"}"
-    printf '%s' "$var"
-}
+# ── u32-фильтр для v3 (используется для явной проверки применения) ──
+U32_FILTER="32 & 0x000FFFFF = 0x0002FFFF && 40 & 0xFF000000 = 0x02000000 && 44 & 0xFFFF0000 = 0x01030000 && 48 & 0xFFFFFF00 = 0x01010800 && 60 & 0xFFFFFFFF = 0x04020000"
+
+# ── Список стран, для которых GEOIP-обход SYN-лимита НЕ применяется ──
+GEOIP_CC_LIST="RU,CN,IR,VN,CU,SO,NP,TM,OM,UA"
 
 # ── Функция определения порта SSH на удалённом сервере ──────
 get_ssh_port() {
@@ -291,6 +289,62 @@ EOF
 systemctl daemon-reload 2>/dev/null || true"
 }
 
+# ── Модуль xt_u32 на удалённом сервере: проверка и установка ──
+u32_module_available_remote() {
+    ssh_exec "if lsmod 2>/dev/null | grep -q '^xt_u32'; then exit 0; fi; modprobe xt_u32 2>/dev/null; if lsmod 2>/dev/null | grep -q '^xt_u32'; then exit 0; fi; iptables -m u32 -h >/dev/null 2>&1 && exit 0; exit 1"
+}
+
+detect_el_major_remote() {
+    local v
+    v=$(ssh_exec "if [ -f /etc/almalinux-release ]; then grep -oE '[0-9]+' /etc/almalinux-release | head -1; elif [ -f /etc/rocky-release ]; then grep -oE '[0-9]+' /etc/rocky-release | head -1; elif [ -f /etc/centos-release ]; then grep -oE '[0-9]+' /etc/centos-release | head -1; elif [ -f /etc/os-release ]; then grep -E '^VERSION_ID=' /etc/os-release | grep -oE '[0-9]+' | head -1; fi")
+    if [ -z "$v" ]; then
+        log_warning "Не удалось определить мажорную версию удалённого дистрибутива — предполагаю 9"
+        v="9"
+    fi
+    printf '%s' "$v"
+}
+
+install_u32_module_remote() {
+    local rel elrepo_url rsudo
+    if ! ssh_exec "command -v dnf >/dev/null 2>&1"; then
+        log_error "dnf не найден на удалённом сервере — установка kmod-xt_u32 невозможна"
+        return 1
+    fi
+    if [ "$(ssh_exec 'id -u')" = "0" ]; then rsudo=""; else rsudo="sudo"; fi
+
+    rel=$(detect_el_major_remote)
+    case "$rel" in
+        8)  elrepo_url="https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm" ;;
+        10) elrepo_url="https://www.elrepo.org/elrepo-release-10.el10.elrepo.noarch.rpm" ;;
+        *)  rel="9"; elrepo_url="https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm" ;;
+    esac
+
+    if ssh_exec "dnf repolist 2>/dev/null | grep -qi elrepo"; then
+        log_info "Репозиторий elrepo уже подключён (версия ${rel}.x)"
+    else
+        log_info "Подключение репозитория elrepo (RHEL/CentOS ${rel}.x)..."
+        if ! ssh_exec "$rsudo dnf install -y '$elrepo_url'"; then
+            log_error "Не удалось подключить репозиторий elrepo"
+            return 1
+        fi
+    fi
+
+    log_info "Установка пакета kmod-xt_u32..."
+    if ! ssh_exec "$rsudo dnf install -y kmod-xt_u32"; then
+        log_error "Не удалось установить пакет kmod-xt_u32"
+        return 1
+    fi
+
+    ssh_exec "$rsudo modprobe xt_u32 2>/dev/null || true"
+    if u32_module_available_remote; then
+        log_success "Модуль xt_u32 загружен и доступен"
+        return 0
+    fi
+    log_error "Пакет установлен, но модуль xt_u32 не загрузился (modprobe/lsmod пусто)"
+    return 1
+}
+
+
 # ── УСТАНОВКА SYN FIX ──────────────────────────────────────
 install_syn_fix() {
     local ports_input
@@ -317,7 +371,7 @@ install_syn_fix() {
         fi
     else
         echo ""
-        clear
+        clear 2>/dev/null || true
         echo -e ""
         echo -e "  ${BOLD}Меню установки MTPRoto FIX V1.2 (удалённо: ${CYAN}${REMOTE_USER}@${REMOTE_IP}${NC}${BOLD})${NC}"
         echo -e "  ${DIM}═══════════════════════════════════════════════════════════════"
@@ -328,7 +382,7 @@ install_syn_fix() {
         echo -e "  ${NC}${BOLD}Либо введите порты через запятую ${DIM}(Например: 443,8443) "
         echo -e ""
         echo -en "  ${NC}${BOLD}Ввод ${GREEN}${BOLD}(По умолчанию Enter - 443)${NC}${BOLD}:${NC}"
-        read -r ports_input
+        { read -r ports_input </dev/tty; } 2>/dev/null || ports_input=""
         if [ -z "$ports_input" ]; then
             ports_input="443"
         fi
@@ -357,7 +411,7 @@ install_syn_fix() {
         echo -e "${DIM}  Иначе -> это другое ус-во и ставим SYN 1 пакет в 1.1 сек."
         echo ""
         echo -en "  ${NC}${BOLD}Ввод (По умолчанию - ${GREEN}${BOLD}1 или enter${NC}${BOLD}):${NC} "
-        read -r fix_choice
+        { read -r fix_choice </dev/tty; } 2>/dev/null || fix_choice=""
 
         if [ -z "$fix_choice" ] || [ "$fix_choice" = "1" ]; then
             FIX_TYPE="new"
@@ -410,7 +464,7 @@ install_syn_fix() {
     if [ ${#valid_ports[@]} -eq 0 ]; then
         log_error "Нет корректных портов для установки"
         echo ""
-        read -rsn1 -p "  Нажмите любую клавишу..."
+        echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
 
@@ -427,7 +481,7 @@ install_syn_fix() {
             ssh_exec "if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq nftables; elif command -v yum >/dev/null 2>&1; then yum install -y -q nftables; elif command -v dnf >/dev/null 2>&1; then dnf install -y -q nftables; else echo 'Не удалось установить nftables'; exit 1; fi"
             if [ $? -ne 0 ]; then
                 log_error "Не удалось установить nftables на удалённом сервере"
-                read -rsn1 -p "  Нажмите любую клавишу..."
+                echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
                 return 1
             fi
         fi
@@ -444,7 +498,7 @@ install_syn_fix() {
             log_warning "${BOLD}ВНИМАНИЕ:${NC} Данная настройка изменит файрвол системы."
             echo ""
             echo -en "  ${BOLD}Продолжить установку? Y/n:${NC} "
-            read -r confirm
+            { read -r confirm </dev/tty; } 2>/dev/null || confirm=""
             if [[ ! "$confirm" =~ ^[yY]$ ]] && [ -n "$confirm" ]; then
                 log_info "Установка отменена"
                 sleep 0.5
@@ -498,7 +552,7 @@ chmod +x $NFT_SCRIPT"
         else
             echo ""
             log_error "Ошибка применения NFT правил"
-            read -rsn1 -p "  Нажмите любую клавишу..."
+            echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
             return 1
         fi
 
@@ -522,14 +576,14 @@ SERVICE_NFT_EOF
         ssh_exec "cat > /etc/systemd/system/mtpr-nft-synfix.service << 'EOF'
 $service_nft_content
 EOF
-systemctl daemon-reload
+systemctl daemon-reload 2>/dev/null || echo 'daemon-reload failed' >&2
 systemctl enable mtpr-nft-synfix.service 2>/dev/null || true
 systemctl restart mtpr-nft-synfix.service 2>/dev/null || true"
 
         echo ""
         log_info "Автозапуск mtpr-nft-synfix.service: $(ssh_exec "systemctl is-enabled mtpr-nft-synfix.service 2>/dev/null || echo неизвестно")"
         log_success "SYN FIX (nftables) успешно установлен на порты: $ports_str"
-        read -rsn1 -p "  Нажмите любую клавишу..."
+        echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 0
     fi
 
@@ -546,7 +600,7 @@ systemctl restart mtpr-nft-synfix.service 2>/dev/null || true"
         log_warning "${BOLD}ВНИМАНИЕ:${NC} Данная настройка изменит файрвол системы."
         echo ""
         echo -en "  ${BOLD}Продолжить установку? [Y/n]:${NC} "
-        read -r confirm
+        { read -r confirm </dev/tty; } 2>/dev/null || confirm=""
         if [[ ! "$confirm" =~ ^[yY]$ ]] && [ -n "$confirm" ]; then
             log_info "Установка отменена"
             sleep 0.5
@@ -554,101 +608,76 @@ systemctl restart mtpr-nft-synfix.service 2>/dev/null || true"
         fi
     fi
 
-    generate_apply_script "$FIX_TYPE" "${valid_ports[@]}"
-    generate_service_unit
-
-    # ── Пытаемся применить правила с перехватом ошибки u32 ──
-    local apply_output
-    local apply_exit_code
-    apply_output=$(ssh_exec "PORT='$ports_str' /opt/mtpr-simple/apply-mtpr-synfix.sh 2>&1")
-    apply_exit_code=$?
-
-    # Проверяем, была ли ошибка с u32 (только для нового варианта)
-    if [ "$FIX_TYPE" = "new" ] && [ $apply_exit_code -ne 0 ] && echo "$apply_output" | grep -q "u32"; then
+    # ── Для v3 (u32) заранее убеждаемся, что модуль xt_u32 есть на удалённом сервере ──
+    if [ "$FIX_TYPE" = "new" ] && ! u32_module_available_remote; then
         echo ""
-        echo -e "  ${YELLOW}[!]${NC} Обнаружена ошибка: модуль u32 отсутствует на удалённом сервере"
-        echo -e "  ${YELLOW}[!]${NC} Для работы нового варианта SYN FIX требуется установить модуль xt_u32"
+        echo -e "  ${YELLOW}[!]${NC} Модуль xt_u32 не найден на удалённом сервере"
+        echo -e "  ${YELLOW}[!]${NC} Он необходим для варианта V3 (iptables + u32)"
         echo ""
-        echo -e "  ${BOLD}Установить необходимый модуль xt_u32?${NC}"
-        echo -e "  ${GREEN}Enter/Y${NC} — установить и продолжить"
-        echo -e "  ${RED}N/n${NC} — отменить установку и вернуться в меню"
-        echo ""
-        echo -en "  ${BOLD}Ввод:${NC} "
-        read -r install_u32
-
-        if [[ -z "$install_u32" || "$install_u32" =~ ^[yY]$ ]]; then
-            echo ""
-            log_info "Установка модуля xt_u32 для AlmaLinux (удалённо)..."
-            echo ""
-
-            # Определяем версию AlmaLinux на удалённом сервере
-            local ALMA_VERSION
-            ALMA_VERSION=$(ssh_exec "if [ -f /etc/almalinux-release ]; then grep -oE '[0-9]+' /etc/almalinux-release | head -1; elif [ -f /etc/os-release ]; then grep -E '^VERSION_ID=' /etc/os-release | cut -d'\"' -f2 | cut -d'.' -f1; fi")
-            if [ -z "$ALMA_VERSION" ]; then
-                ALMA_VERSION="9"
-                echo -e "  ${YELLOW}[!]${NC} Не удалось определить версию AlmaLinux, используем 9"
-            fi
-
-            echo -e "  ${BLUE}[i]${NC} Обнаружена версия AlmaLinux: ${ALMA_VERSION}"
-            echo ""
-
-            local ELREPO_URL=""
-            if [ "$ALMA_VERSION" = "10" ]; then
-                ELREPO_URL="https://www.elrepo.org/elrepo-release-10.el10.elrepo.noarch.rpm"
-            else
-                ELREPO_URL="https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm"
-            fi
-
-            echo -e "  ${BLUE}[i]${NC} Добавление репозитория elrepo (версия ${ALMA_VERSION})..."
-            ssh_exec "sudo dnf install -y \"$ELREPO_URL\" 2>&1"
-            if [ $? -eq 0 ]; then
-                echo -e "  ${GREEN}[✓]${NC} Репозиторий elrepo добавлен"
-            else
-                echo -e "  ${RED}[✗]${NC} Не удалось добавить репозиторий elrepo"
-                read -rsn1 -p "  Нажмите любую клавишу..."
-                return 1
-            fi
-
-            echo ""
-            echo -e "  ${BLUE}[i]${NC} Установка модуля kmod-xt_u32..."
-            ssh_exec "sudo dnf install -y kmod-xt_u32 2>&1"
-            if [ $? -eq 0 ]; then
-                echo -e "  ${GREEN}[✓]${NC} Модуль kmod-xt_u32 успешно установлен"
-                echo ""
-                log_info "Повторная попытка применения правил..."
-                echo ""
-
-                ssh_exec "PORT='$ports_str' /opt/mtpr-simple/apply-mtpr-synfix.sh"
-                ssh_exec "systemctl enable mtpr-synfix.service && systemctl restart mtpr-synfix.service"
-
-                echo ""
-                log_info "Автозапуск mtpr-synfix.service: $(ssh_exec "systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно")"
-                log_success "SYN FIX успешно установлен на порты: $ports_str"
-                read -rsn1 -p "  Нажмите любую клавишу..."
-            else
-                echo -e "  ${RED}[✗]${NC} Не удалось установить модуль kmod-xt_u32"
-                echo -e "  ${YELLOW}[!]${NC} Попробуйте выбрать старый вариант фикса (TTL+Length)"
-                read -rsn1 -p "  Нажмите любую клавишу..."
+        if [ "$auto_install" = true ]; then
+            log_info "Автоматическая установка kmod-xt_u32 через elrepo (удалённо)..."
+            if ! install_u32_module_remote; then
+                log_error "Модуль u32 недоступен. Автоматическая установка не удалась."
                 return 1
             fi
         else
-            log_info "Установка отменена"
-            read -rsn1 -p "  Нажмите любую клавишу..."
+            echo -e "  ${BOLD}Установить необходимый модуль xt_u32?${NC}"
+            echo -e "  ${GREEN}Enter/Y${NC} — установить и продолжить"
+            echo -e "  ${RED}N/n${NC} — отменить установку и вернуться в меню"
+            echo ""
+            echo -en "  ${BOLD}Ввод:${NC} "
+            { read -r install_u32 </dev/tty; } 2>/dev/null || install_u32=""
+            if [[ -z "$install_u32" || "$install_u32" =~ ^[yY]$ ]]; then
+                if ! install_u32_module_remote; then
+                    echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
+                    return 1
+                fi
+            else
+                log_info "Установка отменена"
+                echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
+                return 0
+            fi
+        fi
+    fi
+
+    generate_apply_script "$FIX_TYPE" "${valid_ports[@]}"
+    generate_service_unit
+
+    local apply_output
+    local apply_exit_code
+    if apply_output=$(ssh_exec "PORT='$ports_str' /opt/mtpr-simple/apply-mtpr-synfix.sh 2>&1"); then
+        apply_exit_code=0
+    else
+        apply_exit_code=$?
+    fi
+
+    # ── Явная проверка результата для v3: правило u32 в mangle удалённого сервера ──
+    if [ "$FIX_TYPE" = "new" ]; then
+        if ! ssh_exec "iptables -t mangle -C PREROUTING -m u32 --u32 '$U32_FILTER' -j MARK --set-mark 0x400"; then
+            log_error "SYN FIX (v3/u32) НЕ применён: правило u32 в mangle отсутствует"
+            echo -e "  ${DIM}apply_output:${NC} ${apply_output:-<пусто>}"
+            echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
             return 1
         fi
-    elif [ $apply_exit_code -ne 0 ]; then
+    fi
+
+    if [ $apply_exit_code -ne 0 ]; then
         echo ""
         log_error "Ошибка применения правил iptables:"
         echo "$apply_output"
-        read -rsn1 -p "  Нажмите любую клавишу..."
+        echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
-    else
-        ssh_exec "systemctl enable mtpr-synfix.service && systemctl restart mtpr-synfix.service"
-        echo ""
-        log_info "Автозапуск mtpr-synfix.service: $(ssh_exec "systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно")"
-        log_success "SYN FIX успешно установлен на порты: $ports_str"
-        read -rsn1 -p "  Нажмите любую клавишу..."
     fi
+
+    if ! ssh_exec "systemctl enable mtpr-synfix.service && systemctl restart mtpr-synfix.service"; then
+        log_error "Не удалось включить/перезапустить mtpr-synfix.service"
+        echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
+        return 1
+    fi
+    echo ""
+    log_info "Автозапуск mtpr-synfix.service: $(ssh_exec "systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно")"
+    log_success "SYN FIX успешно установлен на порты: $ports_str"
+    echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── УДАЛЕНИЕ SYN FIX ─────────────────────────────────────────
@@ -714,9 +743,10 @@ remove_syn_fix() {
 }
 
 # ── Главное меню ─────────────────────────────────────────────
+
 main_menu() {
     while true; do
-        clear
+        clear 2>/dev/null || true
         echo ""
         echo -e "  ${BOLD}Меню фиксов (SYN FIX/Zapret2) для ${CYAN}${REMOTE_USER}@${REMOTE_IP}${NC}${BOLD} (порт $REMOTE_PORT)${NC}"
         echo -e "  ${DIM}═══════════════════════════════════════════════════════════${NC}"
@@ -733,7 +763,7 @@ main_menu() {
         echo -e "  ${CYAN}[0]${NC}  ${BOLD}Назад в управление нодой${NC}"
         echo ""
         echo -en "  ${BOLD}Выбор:${NC} "
-        read -r choice
+        { read -r choice </dev/tty; } 2>/dev/null || return 1
 
         case "$choice" in
             1)
@@ -742,14 +772,14 @@ main_menu() {
             2)
                 echo ""
                 remove_syn_fix
-                read -rsn1 -p "  Нажмите любую клавишу..."
+                echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
                 ;;
             3)
                 echo ""
                 echo -e "  Статус iptables: $(get_synfix_status)"
                 echo -e "  Статус nftables: $(get_nft_fix_status)"
                 echo -e "  Zapret2 fix: $(get_zapret2_status_remote)"
-                read -rsn1 -p "  Нажмите любую клавишу..."
+                echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"; { read -rsn1 </dev/tty; } 2>/dev/null || true
                 ;;
             4)
                 echo ""

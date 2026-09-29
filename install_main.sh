@@ -3,18 +3,39 @@ set -e
 
 BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main" 
 MANIFEST_URL="$BASE_URL/data/manifest.txt"
-MANIFEST_FILE="/tmp/manifest.txt"
+MANIFEST_FILE="$(mktemp /tmp/mtpr-manifest.XXXXXX.txt 2>/dev/null)" || {
+    echo "  [✗] Не удалось создать временный файл для манифеста" >&2
+    exit 1
+}
 INSTALL_DIR="/opt/mtpr-simple"
 
-# ── Цвета ─────────────────────────────────────────────────────
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-YELLOW='\033[0;33m'
-RED='\033[0;31m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# ── Неинтерактивный режим: не открывать меню в конце ─────────
+# Включается переменной MEKOPR_NO_MENU=1 или флагом --no-menu.
+# Нужен flag-установке: её вызывают в &&-цепочке, и ожидание ввода
+# на /dev/tty заблокировало бы всю цепочку.
+NO_MENU=0
+if [ "${MEKOPR_NO_MENU:-0}" = "1" ]; then
+    NO_MENU=1
+fi
+for _arg in "$@"; do
+    if [ "$_arg" = "--no-menu" ]; then
+        NO_MENU=1
+    fi
+done
+
+# ── Цвета (только когда stdout — терминал; в пайп/файл не течём ESC) ──
+if [ -t 1 ]; then
+    GREEN='\033[0;32m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    YELLOW='\033[0;33m'
+    RED='\033[0;31m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    GREEN=''; BLUE=''; CYAN=''; YELLOW=''; RED=''; BOLD=''; DIM=''; NC=''
+fi
 
 # ── Экспортируем цвета для дочерних процессов ──────────────
 export GREEN BLUE CYAN YELLOW RED BOLD DIM NC
@@ -25,7 +46,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-clear
+if [ -t 1 ]; then clear 2>/dev/null || true; fi
 # ── Шапка ─────────────────────────────────────────────────────
 echo ""
 echo -e "  ${NC}${BOLD}⚙️ УСТАНОВКА${CYAN}${BOLD} MEKOPR ${NC}${BOLD}(РЕЖИМ: ${CYAN}${BOLD}Main${NC}${BOLD}) v0.22${NC}"
@@ -34,16 +55,31 @@ echo ""
 
 # ── Получение манифеста ──────────────────────────────────────
 echo -e "  ${BLUE}[i]${NC} Загрузка данных..."
-if ! curl -fsSL "$MANIFEST_URL" -o "$MANIFEST_FILE"; then
+if ! curl -fsSL --connect-timeout 10 --max-time 120 "$MANIFEST_URL" -o "$MANIFEST_FILE"; then
     echo -e "  ${RED}[✗]${NC} Не удалось загрузить информацию о необходимых файлах"
     exit 1
 fi
 
+# ── Сохраняем локальную копию манифеста (нужна меню/обновлению) ──
+mkdir -p "$INSTALL_DIR/data"
+cp -f "$MANIFEST_FILE" "$INSTALL_DIR/data/manifest.txt" 2>/dev/null || true
+
 # ── Определение имени текущего скрипта ──────────────────────
-if [ -f "$0" ]; then
+# При запуске через `curl | bash` $0 = "bash" (не файл), а BASH_SOURCE
+# пуст — берём корректное имя установщика, чтобы самоисключение из
+# манифеста всё равно сработало (раньше подставлялся install_auto.sh).
+SCRIPT_NAME=""
+if [ -n "${INSTALL_SCRIPT_NAME:-}" ]; then
+    SCRIPT_NAME="$INSTALL_SCRIPT_NAME"
+elif [ -f "$0" ]; then
     SCRIPT_NAME=$(basename "$0")
+elif [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}")
 else
-    SCRIPT_NAME="install_auto.sh"
+    SCRIPT_NAME=$(basename "$0")
+    case "$SCRIPT_NAME" in
+        ""|bash|sh|dash|-bash|sudo) SCRIPT_NAME="install_main.sh" ;;
+    esac
 fi
 
 echo -e "  ${BLUE}[i]${NC} Исполняемый файл: ${SCRIPT_NAME}"
@@ -60,14 +96,18 @@ download_file() {
     local desc="$2"
     local url="$BASE_URL/$file"
     local dest="$INSTALL_DIR/$file"
-    local name=$(basename "$file")
+    local name
+    name=$(basename "$file")
     local attempts=3
     local count=0
     local success=0
     local err_msg=""
+    local errfile
+    errfile=$(mktemp) || errfile="/tmp/curl_error.$$.$RANDOM.log"
     
     # Получаем размер файла (опционально)
-    local size=$(curl -sI "$url" 2>/dev/null | grep -i "Content-Length" | awk '{print $2}' | tr -d '\r')
+    local size
+    size=$(curl -sI --max-time 5 "$url" 2>/dev/null | grep -i "Content-Length" | awk '{print $2}' | tr -d '\r')
     local size_str="?"
     if [ -n "$size" ] && [ "$size" -gt 0 ] 2>/dev/null; then
         if [ "$size" -gt 1048576 ]; then
@@ -89,20 +129,20 @@ download_file() {
     
     while [ $count -lt $attempts ]; do
         # Убираем подавление ошибок, чтобы видеть причину
-        if curl -fsSL "$url" -o "$dest" 2>/tmp/curl_error_$$.log; then
+        if curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$dest" 2>"$errfile"; then
             echo -e "  ${GREEN}${BOLD}✓${NC}${BOLD} Скачан успешно:${NC} ${GREEN}${BOLD}${name}${NC} (${size_str})"
             success=1
             break
         else
-            err_msg=$(cat /tmp/curl_error_$$.log 2>/dev/null | head -1)
+            err_msg=$(cat "$errfile" 2>/dev/null | head -1)
             count=$((count + 1))
             if [ $count -lt $attempts ]; then
                 echo -e "  ${YELLOW}⚠${NC} Попытка $count не удалась (${err_msg:-неизвестная ошибка}), повтор через 1 сек..."
                 sleep 1
             fi
         fi
-        rm -f /tmp/curl_error_$$.log
     done
+    rm -f "$errfile"
     
     if [ $success -eq 0 ]; then
         echo -e "  ${RED}✗${NC} ${RED}${name}${NC} — ошибка загрузки (после $attempts попыток, последняя ошибка: ${err_msg:-неизвестна})"
@@ -120,14 +160,15 @@ echo ""
 FILES_TO_DOWNLOAD=()
 while IFS='|' read -r file_path description; do
 
-    [[ "$file_path" =~ ^[[:space:]]*#.*$ ]] && continue
-    [ -z "$file_path" ] && continue
-
     # Обрезаем пробелы без xargs (xargs ломает пути с пробелами/кавычками)
     file_path="${file_path#"${file_path%%[![:space:]]*}"}"
     file_path="${file_path%"${file_path##*[![:space:]]}"}"
     description="${description#"${description%%[![:space:]]*}"}"
     description="${description%"${description##*[![:space:]]}"}"
+
+    # Пропускаем комментарии и пустые (в т.ч. из одних пробелов) строки
+    [[ "$file_path" =~ ^#.*$ ]] && continue
+    [ -z "$file_path" ] && continue
     
     file_name=$(basename "$file_path")
     
@@ -141,12 +182,23 @@ while IFS='|' read -r file_path description; do
     
 done < "$MANIFEST_FILE"
 
+# ── Проверка, что манифест содержит main.sh ─────────────────
+manifest_has_main=0
+for _entry in "${FILES_TO_DOWNLOAD[@]}"; do
+    IFS='|' read -r _fp _desc <<< "$_entry"
+    if [ "$(basename "$_fp")" = "main.sh" ]; then manifest_has_main=1; break; fi
+done
+if [ "$manifest_has_main" -ne 1 ]; then
+    echo -e "  ${RED}[✗]${NC} В манифесте нет main.sh — установка невозможна (манифест пуст или повреждён)"
+    rm -f "$MANIFEST_FILE"
+    exit 1
+fi
+
 # ── Вывод списка файлов для загрузки ────────────────────────
 echo -e "  ${BOLD}Файлы для загрузки (${#FILES_TO_DOWNLOAD[@]} шт.):${NC}"
 for entry in "${FILES_TO_DOWNLOAD[@]}"; do
-    file_path=$(echo "$entry" | cut -d'|' -f1)
-    desc=$(echo "$entry" | cut -d'|' -f2)
-    echo -e "    ${DIM}• ${file_path}${NC} (${desc})"
+    IFS='|' read -r file_path description <<< "$entry"
+    echo -e "    ${DIM}• ${file_path}${NC} (${description})"
 done
 echo ""
 
@@ -216,21 +268,42 @@ if [ ! -f "$INSTALL_DIR/main.sh" ]; then
 fi
 
 echo -ne "  ${CYAN}[+]${NC} Создание ссылки ${BOLD}mekopr${NC}... "
-ln -sf "$INSTALL_DIR/main.sh" /usr/local/bin/mekopr && echo -e "${GREEN}✓${NC}"
+if ln -sf "$INSTALL_DIR/main.sh" /usr/local/bin/mekopr; then
+    echo -e "${GREEN}✓${NC}"
+else
+    echo -e "  ${RED}[✗]${NC} Не удалось создать ссылку /usr/local/bin/mekopr"
+    rm -f "$MANIFEST_FILE"
+    exit 1
+fi
+
+echo -ne "  ${CYAN}[+]${NC} Создание короткой ссылки ${BOLD}meko${NC}... "
+if ln -sf "$INSTALL_DIR/main.sh" /usr/local/bin/meko; then
+    echo -e "${GREEN}✓${NC}"
+else
+    echo -e "  ${YELLOW}[!]${NC} Не удалось создать /usr/local/bin/meko (не критично — есть mekopr)"
+fi
 
 # ── Завершение ───────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}${GREEN}✅ Установка MEKO | MTProto Launcher успешно завершена!${NC}"
 echo -e "  ${DIM}─────────────────────────────────────────────────────${NC}"
 echo ""
-echo -e "  Для открытия меню при дальнейшей работе используйте команду ${BOLD}${GREEN}mekopr${NC}"
+echo -e "  Для открытия меню при дальнейшей работе используйте команду ${BOLD}${GREEN}mekopr${NC} (или короткую ${BOLD}meko${NC})"
+echo -e "  ${DIM}Примеры:${NC} ${BOLD}meko online${NC}, ${BOLD}meko telemt${NC}, ${BOLD}meko fix${NC}, ${BOLD}meko nodes${NC}, ${BOLD}mekopr --help${NC}"
 echo ""
 
 # Удаляем временный манифест
 rm -f "$MANIFEST_FILE"
 
+# Неинтерактивный режим (flag-установка): меню не открываем
+if [ "$NO_MENU" -eq 1 ]; then
+    echo -e "  ${GREEN}[✓]${NC} Меню установлено. Запустите ${BOLD}sudo mekopr${NC}, чтобы открыть меню."
+    echo ""
+    exit 0
+fi
+
 # Запускаем main.sh если доступен терминал
-if [ -r /dev/tty ]; then
+if { : </dev/tty; } 2>/dev/null; then
     exec "$INSTALL_DIR/main.sh" </dev/tty
 fi
 

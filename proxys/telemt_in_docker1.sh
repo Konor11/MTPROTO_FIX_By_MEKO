@@ -19,14 +19,27 @@ log_error() { echo -e "  ${RED}[✗]${NC} $1" >&2; }
 log_warning() { echo -e "  ${YELLOW}[!]${NC} $1"; }
 
 # ── Проверка root ────────────────────────────────────────────
+# `return N 2>/dev/null || exit N` работает в обоих режимах запуска:
+#   source из proxys/telemt1.sh -> return из файла (меню не гибнет);
+#   прямой запуск (install_auto.sh) -> return неприменим, срабатывает exit.
 if [ "$(id -u)" -ne 0 ]; then
     log_error "Требуются права root"
-    exit 1
+    # Файл обычно source-ится из telemt1.sh — не убиваем родительский процесс
+    return 1 2>/dev/null || exit 1
+fi
+
+# ── Требуется интерактивный терминал ─────────────────────────
+# Без терминала read с /dev/tty молча возвращает пустоту, и скрипт
+# трактовал бы пустое подтверждение как согласие (боевая установка
+# без согласия). Поэтому неинтерактивный запуск отменяем сразу.
+if ! { : </dev/tty; } 2>/dev/null; then
+    log_error "Нет интерактивного терминала — установка отменена"
+    return 1 2>/dev/null || exit 1
 fi
 
 # ── Получаем последнюю версию Telemt ────────────────────────
 log_info "Получение последней версии Telemt..."
-TELEMT_VERSION=$(curl -s https://api.github.com/repos/telemt/telemt/releases/latest | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/^v//')
+TELEMT_VERSION=$(curl -fsSL --max-time 20 https://api.github.com/repos/telemt/telemt/releases/latest | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/^v//')
 
 if [ -z "$TELEMT_VERSION" ]; then
     log_warning "Не удалось получить версию, используем 3.4.22"
@@ -38,21 +51,37 @@ fi
 # ── Проверка Docker ──────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
     log_warning "Docker не установлен"
-    echo -en "  ${BOLD}Установить Docker? Y/n:${NC} "
-    read -r install_docker
-    if [[ -z "$install_docker" || "$install_docker" =~ ^[yY]$ ]]; then
+    echo -en "  ${BOLD}Установить Docker? y/N:${NC} "
+    { read -r install_docker </dev/tty; } 2>/dev/null || true
+    if [[ "$install_docker" =~ ^[yY]$ ]]; then
         log_info "Установка Docker..."
-        curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
+        # Скачиваем во временный файл (непредсказуемое имя), чистим на всех путях.
+        docker_inst=$(mktemp) || { log_error "Не удалось создать временный файл"; return 1 2>/dev/null || exit 1; }
+        if ! curl -fsSL --max-time 60 https://get.docker.com -o "$docker_inst" || [ ! -s "$docker_inst" ]; then
+            rm -f "$docker_inst"
+            log_error "Не удалось скачать установщик Docker"
+            echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
+            { read -rsn1 </dev/tty; } 2>/dev/null || true
+            return 1 2>/dev/null || exit 1
+        fi
+        if ! sh "$docker_inst"; then
+            rm -f "$docker_inst"
+            log_error "Установка Docker не удалась"
+            echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
+            { read -rsn1 </dev/tty; } 2>/dev/null || true
+            return 1 2>/dev/null || exit 1
+        fi
+        rm -f "$docker_inst"
     else
         log_info "Установка отменена"
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1
-        return 0
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
+        return 0 2>/dev/null || exit 0
     fi
 fi
 
 # ── Заголовок ─────────────────────────────────────────────────
-clear
+clear 2>/dev/null || true
 echo ""
 echo -e "  ${BOLD}УСТАНОВКА TELEMT В DOCKER v0.2${NC}"
 echo -e "  ${DIM}================================${NC}"
@@ -60,13 +89,13 @@ echo ""
 echo -e "  Будет установлен Telemt ${GREEN}${TELEMT_VERSION}${NC} в Docker контейнере"
 echo -e "  ${DIM}Версия: ${TELEMT_VERSION}${NC}"
 echo ""
-echo -en "  ${BOLD}Продолжить установку? Y/n:${NC} "
-read -r confirm
-if [[ -n "$confirm" && "$confirm" =~ ^[nN]$ ]]; then
+echo -en "  ${BOLD}Продолжить установку? y/N:${NC} "
+{ read -r confirm </dev/tty; } 2>/dev/null || true
+if [[ ! "$confirm" =~ ^[yY]$ ]]; then
     log_info "Установка отменена"
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-    read -rsn1
-    return 0
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
+    return 0 2>/dev/null || exit 0
 fi
 
 # ── 1) Автозапуск Docker ─────────────────────────────────────
@@ -74,11 +103,14 @@ echo ""
 echo -e "  ${BOLD}1. Включить автозапуск Docker при старте системы?${NC}"
 echo -e "  ${DIM}(systemctl enable docker && systemctl start docker)${NC}"
 echo -en "  ${BOLD}Включить? Y/n:${NC} "
-read -r docker_autostart
+{ read -r docker_autostart </dev/tty; } 2>/dev/null || true
 if [[ -z "$docker_autostart" || "$docker_autostart" =~ ^[yY]$ ]]; then
     log_info "Включение автозапуска Docker..."
-    systemctl enable docker 2>/dev/null && systemctl start docker 2>/dev/null
-    log_success "Docker автозапуск включён"
+    if systemctl enable docker >/dev/null 2>&1 && systemctl start docker >/dev/null 2>&1; then
+        log_success "Docker автозапуск включён"
+    else
+        log_warning "Не удалось включить автозапуск Docker (проверьте systemctl вручную)"
+    fi
 else
     log_info "Автозапуск Docker пропущен"
 fi
@@ -88,7 +120,7 @@ echo ""
 echo -e "  ${BOLD}2. Путь установки Telemt${NC}"
 echo -e "  ${DIM}По умолчанию: /root/telemt${NC}"
 echo -en "  ${BOLD}Введите путь или нажмите Enter для выбора стандартного:${NC} "
-read -r install_path
+{ read -r install_path </dev/tty; } 2>/dev/null || true
 if [ -z "$install_path" ]; then
     install_path="/root/telemt"
 fi
@@ -99,7 +131,7 @@ echo ""
 echo -e "  ${BOLD}3. Порт для прокси${NC}"
 echo -e "  ${DIM}По умолчанию: 443${NC}"
 echo -en "  ${BOLD}Введите порт или нажмите Enter для выбора порта поумолчанию:${NC} "
-read -r port_input
+{ read -r port_input </dev/tty; } 2>/dev/null || true
 if [ -z "$port_input" ]; then
     port="443"
 elif [[ "$port_input" =~ ^[0-9]+$ ]] && [ "$port_input" -ge 1 ] && [ "$port_input" -le 65535 ]; then
@@ -114,11 +146,19 @@ echo -e "  ${GREEN}✓${NC} Использован порт: ${CYAN}${port}${NC}
 echo ""
 echo -e "  ${BOLD}4. Секрет для доступа к прокси${NC}"
 
+gen_secret() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 16 2>/dev/null
+    else
+        head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'
+    fi
+}
+
 SECRET=""
 while true; do
     # Генерируем секрет при первом проходе или при gen
     if [ -z "$SECRET" ]; then
-        SECRET=$(openssl rand -hex 16)
+        SECRET=$(gen_secret)
     fi
     
     echo -e "  ${DIM}Сгенерирован секрет: ${CYAN}${SECRET}${NC}"
@@ -129,17 +169,21 @@ while true; do
     echo -e "  ${RED}gen${NC} — перегенерировать новый секрет"
     echo ""
     echo -en "  ${BOLD}Ваш выбор:${NC} "
-    read -r secret_input
+    { read -r secret_input </dev/tty; } 2>/dev/null || true
     
     if [[ "$secret_input" =~ ^[Gg][Ee][Nn]$ ]]; then
-        SECRET=$(openssl rand -hex 16)
+        SECRET=$(gen_secret)
         echo ""
         echo -e "  ${GREEN}✓${NC} Новый секрет: ${CYAN}${SECRET}${NC}"
         echo ""
         # Показываем меню снова с новым секретом
         continue
-    elif [[ -n "$secret_input" ]] && [[ ! "$secret_input" =~ ^[yY]$ ]] && [[ -z "$secret_input" ]]; then
-        # Ввели что-то кроме gen, enter, y, Y
+    elif [[ -n "$secret_input" ]] && [[ ! "$secret_input" =~ ^[yY]$ ]]; then
+        # Ввели что-то кроме gen, enter, y, Y — это ручной секрет (hex), валидируем
+        if ! [[ "$secret_input" =~ ^[0-9a-fA-F]{32}$ || "$secret_input" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            log_error "Секрет должен быть 32 или 64 hex-символа"
+            continue
+        fi
         SECRET="$secret_input"
         echo ""
         echo -e "  ${GREEN}✓${NC} Использован секрет: ${CYAN}${SECRET}${NC}"
@@ -159,16 +203,32 @@ echo ""
 echo -e "  ${BOLD}5. TLS домен для маскировки${NC}"
 echo -e "  ${DIM}По умолчанию: rutube.ru${NC}"
 echo -en "  ${BOLD}Введите домен или нажмите Enter для выбора rutube.ru:${NC} "
-read -r tls_domain_input
+{ read -r tls_domain_input </dev/tty; } 2>/dev/null || true
 if [ -z "$tls_domain_input" ]; then
     tls_domain="rutube.ru"
-else
+elif [[ "$tls_domain_input" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,253})$ ]]; then
     tls_domain="$tls_domain_input"
+else
+    log_error "Некорректный домен (допустимы буквы/цифры/точка/дефис)"
+    return 1 2>/dev/null || exit 1
 fi
 echo -e "  ${GREEN}✓${NC} Использован домен: ${CYAN}${tls_domain}${NC}"
 
 # ── 6) Определяем IP ─────────────────────────────────────────
-SERVER_IP=$(curl -4 -fsS ifconfig.me 2>/dev/null || curl -4 -fsS icanhazip.com 2>/dev/null || echo "127.0.0.1")
+SERVER_IP=""
+for _ip_url in https://ifconfig.me/ip https://icanhazip.com https://api.ipify.org; do
+    SERVER_IP=$(curl -4 -fsS --max-time 10 "$_ip_url" 2>/dev/null | tr -d '[:space:]')
+    [ -n "$SERVER_IP" ] && break
+done
+if [ -z "$SERVER_IP" ]; then
+    log_warning "Не удалось автоматически определить внешний IP"
+    echo -en "  ${BOLD}Введите IP сервера вручную:${NC} "
+    { read -r SERVER_IP </dev/tty; } 2>/dev/null || true
+fi
+if [ -z "$SERVER_IP" ]; then
+    log_error "IP сервера не задан — установка отменена"
+    return 1 2>/dev/null || exit 1
+fi
 echo ""
 log_info "Обнаружен IP: $SERVER_IP"
 
@@ -178,8 +238,17 @@ log_info "Начинаем установку Telemt ${TELEMT_VERSION} в Docker
 echo ""
 
 # Создаем папку
-mkdir -p "$install_path" && cd "$install_path"
+if ! mkdir -p "$install_path" || ! cd "$install_path"; then
+    log_error "Не удалось создать/перейти в каталог: $install_path"
+    return 1 2>/dev/null || exit 1
+fi
 log_success "Папка создана: $install_path"
+
+# Страховка: пустой секрет в конфиг писать нельзя
+if [ -z "$SECRET" ]; then
+    log_error "Не удалось сгенерировать секрет — установка отменена"
+    return 1 2>/dev/null || exit 1
+fi
 
 # Создаем config.toml
 cat > config.toml <<EOF
@@ -241,32 +310,21 @@ services:
         hard: 65536
     security_opt:
       - no-new-privileges:true
-
-  watchtower:
-    image: containrrr/watchtower
-    container_name: watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_POLL_INTERVAL=3600
-    command: --include telemt
 EOF
 log_success "docker-compose.yml создан"
 
 # Устанавливаем jq
-apt install -y jq >/dev/null 2>&1 || true
+if ! apt install -y jq >/dev/null 2>&1; then
+    log_warning "Не удалось установить jq — ссылка может не отобразиться"
+fi
 
 # Запускаем
 log_info "Запуск Docker контейнера..."
-docker compose up -d
-
-if [ $? -eq 0 ]; then
-    log_success "Telemt успешно запущен"
-else
+if ! docker compose up -d; then
     log_error "Ошибка запуска Telemt"
+    return 1 2>/dev/null || exit 1
 fi
+log_success "Telemt успешно запущен"
 
 # ── 8) Вывод ссылки ──────────────────────────────────────────
 echo ""
@@ -306,5 +364,5 @@ echo -e "  ${BOLD}${GREEN}══════════════════
 echo ""
 
 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-read -rsn1
-return 0
+{ read -rsn1 </dev/tty; } 2>/dev/null || true
+return 0 2>/dev/null || exit 0

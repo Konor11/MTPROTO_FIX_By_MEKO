@@ -167,17 +167,17 @@ parse_input() {
 
 # ── Добавление сервера ──────────────────────────────────────
 add_server() {
-    clear
+    clear 2>/dev/null || true
     echo ""
     echo -e "  ${BOLD}Добавление нового сервера${NC}"
     echo -e "  ${DIM}═════════════════════════════════════${NC}"
     echo ""
     echo -en "  ${BOLD}Введите IP-адрес или строку типа ${CYAN}'root@1.2.3.4'${NC} или ${CYAN}'ssh root@127.0.0.1'${NC}: "
     local input
-    read -r input
+    { read -r input </dev/tty; } 2>/dev/null || input=""
 
     local parsed
-    parsed=($(parse_input "$input")) || { read -p "Нажмите Enter для возврата..." ; return 1; }
+    parsed=($(parse_input "$input")) || { echo -n "Нажмите Enter для возврата..."; { read -r _ </dev/tty; } 2>/dev/null || true; return 1; }
     local user="${parsed[0]}"
     local ip="${parsed[1]}"
 
@@ -187,7 +187,7 @@ add_server() {
     # ложное «Хост ... не отвечает по SSH (таймаут 5 сек)».
     echo -en "  ${BOLD}Введите порт для SSH подключения (по умолчанию ${GREEN}Enter - 22${NC}${BOLD}):${NC} "
     local port
-    read -r port
+    { read -r port </dev/tty; } 2>/dev/null || port=""
     port=${port:-22}
 
     log_info "Проверка доступности $ip (порт $port)..."
@@ -195,10 +195,10 @@ add_server() {
         log_warning "Порт $port на $ip недоступен (таймаут 5 сек)."
         echo -en "  ${BOLD}Добавить сервер всё равно? [y/N]:${NC} "
         local force
-        read -r force
+        { read -r force </dev/tty; } 2>/dev/null || force=""
         if [[ ! "$force" =~ ^[yY]$ ]]; then
             log_info "Отмена"
-            read -p "Нажмите Enter для продолжения..."
+            echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
             return 0
         fi
     fi
@@ -207,10 +207,10 @@ add_server() {
         echo ""
         echo -en "  ${BOLD}Сервер $ip уже добавлен. Перезаписать? [y/N]:${NC} "
         local overwrite
-        read -r overwrite
+        { read -r overwrite </dev/tty; } 2>/dev/null || overwrite=""
         if [[ ! "$overwrite" =~ ^[yY]$ ]]; then
             log_info "Отмена"
-            read -p "Нажмите Enter для продолжения..." 
+            echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
             return 0
         fi
     fi
@@ -229,14 +229,14 @@ add_server() {
             log_success "Ключ успешно скопирован."
         else
             log_error "Не удалось скопировать ключ. Проверьте пароль и доступность."
-            read -p "Нажмите Enter для продолжения..."
+            echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
             return 1
         fi
     fi
 
     save_server_config "$ip" "$user" "$port"
     log_success "Сервер $ip сохранён."
-    read -p "Нажмите Enter для продолжения..."
+    echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
 }
 
 # ── Удаление сервера (конфиг + отзыв ключа) ────────────────
@@ -251,7 +251,7 @@ remove_server() {
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local confirm
-    read -r confirm
+    { read -r confirm </dev/tty; } 2>/dev/null || { echo; log_info "Нет доступа к терминалу — отмена"; return 0; }
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
         log_info "Отмена"
         return 0
@@ -282,7 +282,7 @@ remove_server() {
     fi
 
     log_success "Сервер $ip полностью удалён."
-    read -p "Нажмите Enter для продолжения..."
+    echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
 }
 
 # ── Очистка всех прокси и фиксов на сервере ────────────────
@@ -303,7 +303,7 @@ clean_all_on_server() {
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local confirm
-    read -r confirm
+    { read -r confirm </dev/tty; } 2>/dev/null || { echo; log_info "Нет доступа к терминалу — отмена"; return 0; }
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
         log_info "Отмена"
         return 0
@@ -374,7 +374,7 @@ clean_all_on_server() {
 
     # 7. Очистка остатков MEKO
     log_info "Удаление каталогов MEKO..."
-    ssh $SSH_OPTS "$user@$ip" "rm -rf /opt/mtpr-simple /opt/telemt /etc/telemt /etc/telemt.toml /opt/mtproto-proxy 2>/dev/null || true" 2>/dev/null
+    ssh $SSH_OPTS "$user@$ip" "rm -rf /opt/mtpr-simple /opt/telemt /etc/telemt /etc/telemt.toml /opt/mtproto-proxy 2>/dev/null" 2>/dev/null
     rc=$?
     [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 7 (каталоги MEKO) завершился с кодом $rc."; }
 
@@ -383,17 +383,322 @@ clean_all_on_server() {
     else
         log_warning "Очистка сервера $ip завершена с ошибками (см. предупреждения выше)."
     fi
-    read -p "Нажмите Enter для продолжения..."
+    echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
+}
+
+# ── Путь к локальному конфигу Telemt ───────────────────────
+# Приоритет: путь из /opt/mtpr-simple/config_path, иначе /etc/telemt/telemt.toml.
+get_local_config_path() {
+    local cfgfile="/opt/mtpr-simple/config_path"
+    if [ -s "$cfgfile" ]; then
+        local p
+        p=$(head -1 "$cfgfile" 2>/dev/null)
+        if [ -n "$p" ] && [ "$p" != "skip" ] && [ -f "$p" ]; then
+            echo "$p"
+            return 0
+        fi
+    fi
+    echo "/etc/telemt/telemt.toml"
+}
+
+# ── Парсинг клиентов из секции [access.users] ──────────────
+# Формат Telemt: [access.users], записи "имя = \"секрет\"".
+# Вывод: строки вида "имя:секрет" (по одной на клиента).
+parse_clients_from_file() {
+    local file="$1"
+    [ -f "$file" ] || return 1
+    sed -n '/^\[access\.users\]/,/^\[/p' "$file" 2>/dev/null \
+        | grep -E '=' | grep -v '^[[:space:]]*#' \
+        | while IFS='=' read -r _name _secret; do
+            _name=$(echo "$_name" | tr -d ' "' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+            _secret=$(echo "$_secret" | tr -d ' "' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+            if [ -n "$_name" ] && [ -n "$_secret" ]; then
+                echo "$_name:$_secret"
+            fi
+        done
+}
+
+# ── Синхронизация клиентов: локальная нода → удалённая ─────
+# Добавляет на ноду только ОТСУТСТВУЮЩИХ клиентов (ничего не удаляет),
+# перед правкой делает бэкап, затем restart telemt с проверкой is-active.
+sync_clients_from_local() {
+    local ip="$1"
+    local user="$2"
+    local port="$3"
+    local SSH_OPTS="-o ConnectTimeout=5 -o ConnectionAttempts=2 -p $port"
+
+    clear 2>/dev/null || true
+    echo ""
+    echo -e "  ${BOLD}Синхронизация клиентов: локальная нода → ${CYAN}$ip${NC}"
+    echo -e "  ${DIM}══════════════════════════════════════════════════${NC}"
+
+    # 1. Локальный конфиг
+    local local_cfg
+    local_cfg=$(get_local_config_path)
+    if [ ! -f "$local_cfg" ]; then
+        echo ""
+        log_error "Локальный конфиг Telemt не найден: $local_cfg"
+        log_info "Проверьте путь в /opt/mtpr-simple/config_path или /etc/telemt/telemt.toml."
+        echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
+        return 1
+    fi
+    local local_clients
+    local_clients=$(parse_clients_from_file "$local_cfg")
+    echo ""
+    log_info "Локальный конфиг: $local_cfg"
+    if [ -z "$local_clients" ]; then
+        log_warning "В локальном конфиге нет клиентов в секции [access.users]."
+        echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
+        return 1
+    fi
+
+    # 2. Удалённый конфиг (путь + содержимое по SSH)
+    local remote_cfg
+    remote_cfg=$(ssh $SSH_OPTS "$user@$ip" 'p=""; if [ -s /opt/mtpr-simple/config_path ]; then p=$(head -1 /opt/mtpr-simple/config_path); fi; if [ -z "$p" ] || [ "$p" = "skip" ]; then p=/etc/telemt/telemt.toml; fi; echo "$p"' 2>/dev/null | tail -1)
+    remote_cfg=$(trim "$remote_cfg")
+    if [[ ! "$remote_cfg" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
+        echo ""
+        log_error "Не удалось определить конфиг Telemt на ноде ($ip)."
+        echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
+        return 1
+    fi
+    local remote_content
+    remote_content=$(ssh $SSH_OPTS "$user@$ip" "cat '$remote_cfg'" 2>/dev/null)
+    if [ -z "$remote_content" ]; then
+        echo ""
+        log_error "Не удалось прочитать конфиг на ноде: $remote_cfg"
+        echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
+        return 1
+    fi
+    local tmp_remote
+    tmp_remote=$(mktemp)
+    printf '%s\n' "$remote_content" > "$tmp_remote"
+    local remote_clients
+    remote_clients=$(parse_clients_from_file "$tmp_remote")
+    rm -f "$tmp_remote"
+
+    log_info "Удалённый конфиг: $remote_cfg"
+
+    # 3. Таблица сравнения
+    echo ""
+    printf "  %-24s %-10s %-10s %s\n" "Клиент" "Локально" "На ноде" "Действие"
+    printf "  %-24s %-10s %-10s %s\n" "────────────────────────" "──────────" "──────────" "────────────────────────"
+    local add_lines=""
+    local add_count=0
+    local skipped=0
+    local name secret rsecret action
+    while IFS=: read -r name secret; do
+        [ -z "$name" ] && continue
+        if [[ ! "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || [[ ! "$secret" =~ ^[A-Za-z0-9+/=_-]+$ ]]; then
+            printf "  %-24s %-10s %-10s %s\n" "$name" "да" "?" "пропущен (недопустимые символы)"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        if printf '%s\n' "$remote_clients" | cut -d: -f1 | grep -qxF "$name"; then
+            rsecret=$(printf '%s\n' "$remote_clients" | awk -F: -v n="$name" '$1==n{print substr($0, index($0,":")+1); exit}')
+            if [ "$rsecret" = "$secret" ]; then
+                action="уже есть"
+            else
+                action="уже есть (секрет отличается!)"
+            fi
+            printf "  %-24s %-10s %-10s %s\n" "$name" "да" "да" "$action"
+        else
+            printf "  %-24s %-10s %-10s %s\n" "$name" "да" "нет" "добавить"
+            add_lines="${add_lines}${name}"$'\t'"${secret}"$'\n'
+            add_count=$((add_count + 1))
+        fi
+    done <<< "$local_clients"
+
+    # Клиенты, которых нет локально: НЕ удаляем, только предупреждаем.
+    local extra_count=0
+    local rname rsec
+    while IFS=: read -r rname rsec; do
+        [ -z "$rname" ] && continue
+        if ! printf '%s\n' "$local_clients" | cut -d: -f1 | grep -qxF "$rname"; then
+            printf "  %-24s %-10s %-10s %s\n" "$rname" "нет" "да" "лишний (не удаляю)"
+            extra_count=$((extra_count + 1))
+        fi
+    done <<< "$remote_clients"
+
+    echo ""
+    if [ "$add_count" -eq 0 ]; then
+        log_success "Все локальные клиенты уже есть на ноде. Добавлять нечего."
+        [ "$extra_count" -gt 0 ] && log_warning "На ноде $extra_count клиент(ов), которых нет локально — они не тронуты."
+        echo -n "  Нажмите Enter для продолжения..."
+        { read -r _ </dev/tty; } 2>/dev/null || { echo; return 0; }
+        return 0
+    fi
+    log_info "К добавлению на ноду: $add_count клиент(ов)."
+    [ "$extra_count" -gt 0 ] && log_warning "На ноде $extra_count лишних клиент(ов) — они не будут удалены."
+    [ "$skipped" -gt 0 ] && log_warning "Пропущено некорректных записей: $skipped."
+    echo ""
+    echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
+    local confirm
+    { read -r confirm </dev/tty; } 2>/dev/null || { echo; log_info "Нет доступа к терминалу — отмена"; return 0; }
+    if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+        log_info "Отмена"
+        return 0
+    fi
+
+    # 4. Применение на ноде: бэкап → правка → verify (если есть) → restart
+    local ts
+    ts=$(date +%Y%m%d-%H%M%S)
+    local b64
+    b64=$(printf '%s' "$add_lines" | base64 | tr -d '\n')
+    echo ""
+    log_info "Применяю на ноде (бэкап: ${remote_cfg}.bak.${ts})..."
+
+    # #1: base64-пayload содержит секреты клиентов — НЕ передаём его
+    # аргументом SSH-команды (argv виден в `ps` и ограничен ARG_MAX).
+    # Payload подставляется в тело скрипта, а тело уходит на ноду по stdin.
+    local apply_out _remote_script
+    _remote_script=$(cat <<'REMOTE_SYNC'
+set -u
+CFG="$1"
+TS="$2"
+B64='__B64PAYLOAD__'
+
+[ -f "$CFG" ] || { echo "ERR_NO_CFG"; exit 11; }
+
+BAK="${CFG}.bak.${TS}"
+cp -a "$CFG" "$BAK" || { echo "ERR_BACKUP"; exit 12; }
+echo "BACKUP=$BAK"
+
+PAYLOAD=$(printf '%s' "$B64" | base64 -d 2>/dev/null) || { echo "ERR_B64"; exit 13; }
+[ -n "$PAYLOAD" ] || { echo "ERR_EMPTY_PAYLOAD"; exit 14; }
+
+BLOCK=$(printf '%s\n' "$PAYLOAD" | while IFS="$(printf '\t')" read -r _n _s; do
+    [ -n "$_n" ] && printf '%s = "%s"\n' "$_n" "$_s"
+done)
+[ -n "$BLOCK" ] || { echo "ERR_EMPTY_BLOCK"; exit 15; }
+
+# #8: временный файл кладём в ТОТ ЖЕ каталог, что и конфиг, и записываем через
+# mv — запись атомарна. Прежний код (cat > CFG) при обрыве/ENOSPC оставлял
+# конфиг усечённым и не восстанавливал бэкап в ветке ERR_WRITE.
+_cfg_dir=$(dirname "$CFG")
+TMP=$(mktemp "${_cfg_dir}/.telemt-sync.XXXXXX") || { echo "ERR_TMP"; exit 16; }
+START=$(grep -n '^\[access\.users\]' "$CFG" | head -1 | cut -d: -f1)
+
+if [ -z "$START" ]; then
+    # #10: точная секция [access.users] не найдена. Если есть альтернативная
+    # форма ([access], [[access.users]], inline) — угадывать нельзя: дописали бы
+    # ВТОРУЮ секцию. Отказываем явно.
+    if grep -qE '^\[\[?access\.users\]\]?|^\[access\]|^[[:space:]]*access[[:space:]]*=[[:space:]]*\{' "$CFG"; then
+        echo "ERR_FORMAT"
+        rm -f "$TMP"
+        exit 23
+    fi
+    cat "$CFG" > "$TMP" || { echo "ERR_COPY"; rm -f "$TMP"; exit 17; }
+    printf '\n[access.users]\n%s\n' "$BLOCK" >> "$TMP"
+else
+    awk -v s="$START" -v ins="$BLOCK" 'NR==s { print; printf "%s\n", ins; next } { print }' "$CFG" > "$TMP" || { echo "ERR_AWK"; rm -f "$TMP"; exit 18; }
+fi
+
+# mv сохраняет права/владельца временного файла, поэтому переносим их с оригинала.
+_perm=$(stat -c '%a' "$CFG" 2>/dev/null || echo 640)
+_owner=$(stat -c '%u:%g' "$CFG" 2>/dev/null || echo 0:0)
+chmod "$_perm" "$TMP" 2>/dev/null || true
+chown "$_owner" "$TMP" 2>/dev/null || true
+
+if ! mv -f "$TMP" "$CFG"; then
+    echo "ERR_WRITE"
+    cp -a "$BAK" "$CFG" 2>/dev/null || true
+    echo "ROLLBACK=write"
+    rm -f "$TMP" 2>/dev/null || true
+    exit 19
+fi
+echo "APPLIED"
+
+if command -v telemt >/dev/null 2>&1 && telemt --help 2>&1 | grep -q 'verify'; then
+    if telemt --config "$CFG" verify >/dev/null 2>&1; then
+        echo "VERIFY=ok"
+    else
+        echo "VERIFY=fail"
+        cp -a "$BAK" "$CFG" 2>/dev/null || true
+        echo "ROLLBACK=verify"
+        exit 20
+    fi
+else
+    echo "VERIFY=skip"
+    # #9: tomllib есть только в Python 3.11+. На Ubuntu 22.04 / Debian 11 /
+    # RHEL 8-9 его нет, и ImportError НЕ означает невалидный конфиг — пропускаем
+    # проверку (TOML=skip), не откатываем рабочую синхронизацию.
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import tomllib' >/dev/null 2>&1; then
+        if python3 -c 'import sys,tomllib; tomllib.load(open(sys.argv[1],"rb"))' "$CFG" >/dev/null 2>&1; then
+            echo "TOML=ok"
+        else
+            echo "TOML=fail"
+            cp -a "$BAK" "$CFG" 2>/dev/null || true
+            echo "ROLLBACK=toml"
+            exit 22
+        fi
+    else
+        echo "TOML=skip"
+    fi
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl restart telemt >/dev/null 2>&1
+    _rc=$?
+    sleep 1
+    if [ "$_rc" -eq 0 ] && systemctl is-active --quiet telemt; then
+        echo "RESTART=ok"
+    else
+        echo "RESTART=fail"
+        cp -a "$BAK" "$CFG" 2>/dev/null || true
+        systemctl restart telemt >/dev/null 2>&1 || true
+        echo "ROLLBACK=restart"
+        exit 21
+    fi
+else
+    echo "RESTART=skip"
+fi
+
+echo "SYNC_OK"
+exit 0
+REMOTE_SYNC
+)
+    apply_out=$(printf '%s' "${_remote_script/__B64PAYLOAD__/$b64}" | ssh $SSH_OPTS "$user@$ip" "bash -s -- '$remote_cfg' '$ts'" 2>/dev/null)
+    local apply_rc=$?
+
+    # 5. Честный итог
+    echo ""
+    echo "$apply_out" | while IFS= read -r _line; do
+        case "$_line" in
+            BACKUP=*)    log_info "Бэкап конфига ноды: ${_line#BACKUP=}" ;;
+            APPLIED)     log_success "Клиенты добавлены в конфиг ноды." ;;
+            VERIFY=ok)   log_success "Проверка конфига (telemt verify): ok." ;;
+            VERIFY=skip) log_info "telemt verify недоступен — проверка пропущена." ;;
+            TOML=ok)     log_success "Конфиг ноды валиден (tomllib)." ;;
+            TOML=skip)   log_warning "python3 недоступен — TOML-проверка пропущена." ;;
+            TOML=fail)   log_error "Конфиг ноды невалиден (tomllib) — выполнен откат из бэкапа." ;;
+            RESTART=ok)  log_success "Telemt на ноде перезапущен, is-active: ok." ;;
+            RESTART=skip) log_warning "systemctl недоступен — сервис не перезапущен." ;;
+            VERIFY=fail) log_error "Проверка конфига не прошла — выполнен откат из бэкапа." ;;
+            RESTART=fail) log_error "Telemt не поднялся — конфиг откачен из бэкапа." ;;
+            ERR_FORMAT)  log_error "Формат секции [access.users] на ноде не распознан — синхронизация отменена." ;;
+            ERR_*)       log_error "Ошибка на ноде: $_line" ;;
+            ROLLBACK=*)  log_warning "Выполнен откат (${_line#ROLLBACK=})." ;;
+        esac
+    done
+
+    if [ "$apply_rc" -eq 0 ] && echo "$apply_out" | grep -q '^SYNC_OK$'; then
+        log_success "Синхронизация завершена: добавлено клиентов — $add_count."
+    else
+        log_warning "Синхронизация НЕ завершена успешно (код $apply_rc). Конфиг ноды не изменён или откачен."
+    fi
+    echo -n "  Нажмите Enter для продолжения..."
+    { read -r _ </dev/tty; } 2>/dev/null || { echo; return 1; }
 }
 
 # ── Список серверов ─────────────────────────────────────────
 list_servers() {
-    clear
+    clear 2>/dev/null || true
     local servers=($(get_servers))
     if [[ ${#servers[@]} -eq 0 ]]; then
         echo ""
         log_warning "Нет сохранённых серверов. Добавьте их с помощью пункта [1]"
-        read -p "  Нажмите Enter чтобы вернуться в меню"
+        echo -n "  Нажмите Enter чтобы вернуться в меню"; { read -r _ </dev/tty; } 2>/dev/null || true
         return 0
     fi
 
@@ -409,14 +714,14 @@ list_servers() {
     echo ""
     echo -en "  ${BOLD}Выберите номер сервера (или 0):${NC} "
     local choice
-    read -r choice
+    { read -r choice </dev/tty; } 2>/dev/null || { echo; return 0; }
 
     if [[ "$choice" -eq 0 ]]; then
         return 0
     fi
     if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt ${#servers[@]} ]]; then
         log_error "Неверный номер."
-        read -p "Нажмите Enter для продолжения..."
+        echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
         return 1
     fi
     local selected_ip="${servers[$((choice-1))]}"
@@ -433,12 +738,12 @@ server_submenu() {
 
     if [[ -z "$user" ]]; then
         log_error "Не удалось загрузить конфиг для $ip."
-        read -p "Нажмите Enter для продолжения..."
+        echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
         return 1
     fi
 
     while true; do
-        clear
+        clear 2>/dev/null || true
         echo ""
         echo -e "  ${BOLD}Меню сервера: ${CYAN}${user}@${ip}${NC}${BOLD}:$port${NC}"
         echo -e "  ${DIM}════════════════════════════════════════════════════${NC}"
@@ -446,16 +751,17 @@ server_submenu() {
         echo -e "  ${CYAN}[1]${NC}${BOLD} Проверить статус ноды (онлайн/оффлайн)"
         echo -e ""
         echo -e "  ${CYAN}[2]${NC}${BOLD} Меню работы с прокси"
-        echo -e "  ${CYAN}[3]${NC}${BOLD} Выполнить произвольную команду"
-        echo -e "  ${CYAN}[4]${RED}${BOLD} Удалить сервер ${NC}(отозвать ключ и конфиг)${NC}"
-        echo -e "  ${CYAN}[5]${YELLOW}${BOLD} Очистить всё на сервере ${NC}(прокси + фиксы)${NC}"
-        echo -e "  ${CYAN}[6]${NC} ${BOLD}Меню фиксов (SYN FIX/Zapret2)${NC}"
+        echo -e "  ${CYAN}[3]${NC}${BOLD} Синхронизировать клиентов с локальной нодой"
+        echo -e "  ${CYAN}[4]${NC}${BOLD} Выполнить произвольную команду"
+        echo -e "  ${CYAN}[5]${RED}${BOLD} Удалить сервер ${NC}(отозвать ключ и конфиг)${NC}"
+        echo -e "  ${CYAN}[6]${YELLOW}${BOLD} Очистить всё на сервере ${NC}(прокси + фиксы)${NC}"
+        echo -e "  ${CYAN}[7]${NC} ${BOLD}Меню фиксов (SYN FIX/Zapret2)${NC}"
         echo -e ""
         echo -e "  ${CYAN}[0]${NC}${BOLD} Назад"
         echo ""
         echo -en "  ${BOLD}Ввод:${NC} "
         local act
-        read -r act
+        { read -r act </dev/tty; } 2>/dev/null || { echo; return 0; }
 
         case "$act" in
             1)
@@ -467,7 +773,7 @@ server_submenu() {
                 else
                     log_error "Сервер недоступен или ключ не работает."
                 fi
-                read -p "Нажмите Enter для продолжения..."
+                echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
                 ;;
             2)
                 echo ""
@@ -480,30 +786,33 @@ server_submenu() {
                     continue
                 else
                     log_error "Скрипт $NODE_TELEMT_SCRIPT не найден."
-                    read -p "Нажмите Enter для продолжения..."
+                    echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
                 fi
                 ;;
             3)
+                sync_clients_from_local "$ip" "$user" "$port"
+                ;;
+            4)
                 echo ""
                 echo -en "  ${BOLD}Введите команду для выполнения на сервере:${NC} "
                 local cmd
-                read -r cmd
+                { read -r cmd </dev/tty; } 2>/dev/null || { echo; return 0; }
                 if [[ -n "$cmd" ]]; then
                     echo ""
                     ssh -o ConnectTimeout=5 -p "$port" "$user@$ip" "$cmd"
                 else
                     log_warning "Команда не введена."
                 fi
-                read -p "Нажмите Enter для продолжения..."
+                echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
                 ;;
-            4)
+            5)
                 remove_server "$ip" "$user" "$port"
                 return 0  # выходим из подменю, возвращаемся в список
                 ;;
-            5)
+            6)
                 clean_all_on_server "$ip" "$user" "$port"
                 ;;
-            6)
+            7)
                 echo ""
                 local NODE_RULES_SCRIPT="$SCRIPT_DIR/rules1_node.sh"
                 if [ -f "$NODE_RULES_SCRIPT" ]; then
@@ -512,7 +821,7 @@ server_submenu() {
                     continue
                 else
                     log_error "Скрипт $NODE_RULES_SCRIPT не найден."
-                    read -p "Нажмите Enter для продолжения..."
+                    echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
                 fi
                 ;;
             0)
@@ -520,7 +829,7 @@ server_submenu() {
                 ;;
             *)
                 log_error "Неверный выбор."
-                read -p "Нажмите Enter для продолжения..."
+                echo -n "Нажмите Enter для продолжения..."; { read -r _ </dev/tty; } 2>/dev/null || true
                 ;;
         esac
     done
@@ -529,7 +838,7 @@ server_submenu() {
 # ── Главное меню ─────────────────────────────────────────────
 main_menu() {
     while true; do
-        clear
+        clear 2>/dev/null || true
         local server_count=$(get_server_count)
         echo ""
         echo -e "  ${BOLD}MEKO ${CYAN}| ${NC}${BOLD}NODE MANAGER v0.1 ${NC}"
@@ -543,13 +852,13 @@ main_menu() {
         echo ""
         echo -en "  ${BOLD}Ввод:${NC} "
         local choice
-        read -r choice
+        { read -r choice </dev/tty; } 2>/dev/null || { echo; break; }
 
         case "$choice" in
             1) add_server ;;
             2) list_servers ;;
             0) echo "" ; log_info "Выход." ; exit 0 ;;
-            *) log_error "Неверный выбор." ; read -p "Нажмите Enter для продолжения..." ;;
+            *) log_error "Неверный выбор." ; { read -r _ </dev/tty; } 2>/dev/null || true ;;
         esac
     done
 }

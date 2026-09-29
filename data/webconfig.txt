@@ -16,10 +16,10 @@ listen = "127.0.0.1:9091"
 whitelist = ["127.0.0.1/32"]
 
 [censorship]
-tls_domain = "ozon.ru" # Замените на другой свой/чужой домен
+tls_domain = "example.com" # Замените на свой домен
 
 [access.users]
-hello = "e5544cb710bae52b8bcbc05375921c16"
+hello = "CHANGE_ME_32HEX" # Замените на свой секрет (32 hex-символа)
 
 # ========== MTProto ==========
 [[server.listeners]]
@@ -40,8 +40,10 @@ enabled = true
 carrier = "https-lanes"
 
 [[web.vhosts]]
-host = "zdez.tvoi.domen.com"  # замените на свой домен
-public_addr = "12.34.56.789:443"   # замените на реальный IP
+host = "example.com"  # замените на свой домен
+public_addr = "203.0.113.10:443"   # замените на реальный IP:порт
+# Необязательно: путь WEB внутри домена (telemt 3.5.8+). Пусто — корень.
+# base_path = "app/sync"
 
 [web.vhosts.decoy]
 mode = "static_directory"
@@ -51,3 +53,8 @@ index = "index.html"
 [[web.vhosts.profiles]]
 user = "hello"
 secret_mode = "dd"
+
+# Необязательно: отчёты bridge-страницы (по умолчанию выключены).
+# [web.debug]
+# enabled = true
+# sideband = true

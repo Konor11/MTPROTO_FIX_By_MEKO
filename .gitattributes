@@ -1,0 +1,11 @@
+# Нормализация переводов строк: репозиторий — Linux-скрипты, поэтому LF везде.
+# Без этого файла Windows-редакторы и git могут закоммитить CRLF, и скрипты
+# падают на сервере с "bad interpreter: /bin/bash^M".
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
+*.toml text eol=lf

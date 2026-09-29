@@ -1,21 +1,25 @@
 #!/bin/bash
 # install_vpn.sh – Меню установки VPN (3x-ui / Remnawave)
 
-set -e
+set -euo pipefail
 
 BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main"
 INSTALL_DIR="/opt/mtpr-simple"
 
-# ── Цвета ─────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-GRAY='\033[0;90m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# ── Цвета (только когда stdout — терминал; в пайп/файл не течём ESC) ──
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    GRAY='\033[0;90m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; GRAY=''; BOLD=''; DIM=''; NC=''
+fi
 
 # ── Логирование ─────────────────────────────────────────────
 log_info() { echo -e "  ${BLUE}[i]${NC} $1"; }
@@ -45,24 +49,6 @@ download_file() {
     fi
 }
 
-# ── Функция проверки и загрузки файла ────────────────────────
-ensure_file() {
-    local file="$1"
-    local dest="$INSTALL_DIR/$file"
-    
-    if [ ! -f "$dest" ]; then
-        log_info "Скачивание $file..."
-        if download_file "$file" "$dest"; then
-            log_success "$file загружен"
-        else
-            log_error "Не удалось загрузить $file"
-            return 1
-        fi
-    fi
-    chmod +x "$dest" 2>/dev/null || true
-    return 0
-}
-
 # ── Открытие меню 3x-ui ──────────────────────────────────────
 open_3xui_menu() {
     local menu_file="$INSTALL_DIR/3x-ui_menu.sh"
@@ -76,7 +62,7 @@ open_3xui_menu() {
         else
             log_error "Не удалось загрузить меню 3x-ui"
             echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-            read -rsn1 </dev/tty 2>/dev/null || true
+            { read -rsn1 </dev/tty; } 2>/dev/null || true
             return
         fi
     fi
@@ -103,11 +89,14 @@ install_remnawave() {
         log_error "Установщик Remnawave вернул пустой скрипт"
         return 1
     fi
+    # ВНИМАНИЕ: контракт НЕ подтверждён (приёмка static-audit, INFO/не проверено).
+    # `@` уходит в $0, `--lang=ru` — в $1. Оставлено как есть до подтверждения
+    # контракта в upstream remnawave-installer.
     exec sudo bash -c "$installer_script" @ --lang=ru </dev/tty
 }
 
 # ── Очистка экрана и шапка ────────────────────────────────────
-clear 2>/dev/null || printf '\033[2J\033[H'
+if [ -t 1 ]; then clear 2>/dev/null || printf '\033[2J\033[H'; fi
 echo ""
 echo -e "  ${CYAN}${BOLD}⚙️ ${NC}${BOLD}Meko Manager ${CYAN}${BOLD}| ${NC}${BOLD}Меню VPN ${CYAN}${BOLD}v1.95 ${CYAN}${BOLD}⚙️${NC}"
 echo -e "  ${BOLD}${DIM}═════════════════════════════════════════════════${NC}"
@@ -127,7 +116,7 @@ echo ""
 echo -en "  ${NC}${BOLD}Ввод (${GREEN}${BOLD}Enter${NC}${BOLD} - меню 3x-ui):${NC} "
 
 # ── Читаем ввод с терминала ──────────────────────────────────
-if ! read -r choice </dev/tty 2>/dev/null; then
+if ! { read -r choice </dev/tty; } 2>/dev/null; then
     echo ""
     echo -e "  ${RED}[✗]${NC} Не удалось прочитать ввод."
     exit 1
@@ -146,7 +135,17 @@ case "$choice" in
         ;;
     *)
         open_3xui_menu
-        # После возврата из подменю перезапускаем install_vpn.sh, чтобы обновить экран
-        exec "$0"
+        # После возврата из подменю перезапускаем install_vpn.sh, чтобы обновить экран.
+        # Путь берём из BASH_SOURCE[0]: он пуст при запуске через пайп (`bash -s`),
+        # поэтому тогда перезапускаемся из каталога установки, а не как «bash ""».
+        self="${BASH_SOURCE[0]:-}"
+        if [ -n "$self" ] && [ -f "$self" ]; then
+            exec bash "$self"
+        elif [ -f "$INSTALL_DIR/install_vpn.sh" ]; then
+            exec bash "$INSTALL_DIR/install_vpn.sh"
+        else
+            log_error "Не удалось перезапустить меню: $INSTALL_DIR/install_vpn.sh не найден"
+            exit 1
+        fi
         ;;
 esac

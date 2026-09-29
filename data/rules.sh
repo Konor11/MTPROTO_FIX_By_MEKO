@@ -271,6 +271,338 @@ SERVICE_UNIT_EOF
     fi
 }
 
+# ── u32-фильтр для v3 (используется для явной проверки применения) ──
+U32_FILTER="32 & 0x000FFFFF = 0x0002FFFF && 40 & 0xFF000000 = 0x02000000 && 44 & 0xFFFF0000 = 0x01030000 && 48 & 0xFFFFFF00 = 0x01010800 && 60 & 0xFFFFFFFF = 0x04020000"
+
+# ── Список стран, для которых GEOIP-обход SYN-лимита НЕ применяется ──
+GEOIP_CC_LIST="RU,CN,IR,VN,CU,SO,NP,TM,OM,UA"
+
+# ── Модуль xt_u32: фактическая проверка и установка (Alma/Rocky/CentOS) ──
+u32_module_available() {
+    # 1) уже загружен в ядро?
+    if lsmod 2>/dev/null | grep -q '^xt_u32'; then
+        return 0
+    fi
+    # 2) пробуем загрузить и перепроверяем факт
+    if modprobe xt_u32 2>/dev/null; then
+        lsmod 2>/dev/null | grep -q '^xt_u32' && return 0
+    fi
+    # 3) косвенная проверка: iptables умеет match u32
+    if command -v iptables >/dev/null 2>&1 && iptables -m u32 -h >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+# Мажорная версия RHEL-совместимого дистрибутива (Alma/Rocky/CentOS/Oracle)
+detect_el_major() {
+    local v=""
+    if [ -f /etc/almalinux-release ]; then
+        v=$(grep -oE '[0-9]+' /etc/almalinux-release | head -1)
+    elif [ -f /etc/rocky-release ]; then
+        v=$(grep -oE '[0-9]+' /etc/rocky-release | head -1)
+    elif [ -f /etc/centos-release ]; then
+        v=$(grep -oE '[0-9]+' /etc/centos-release | head -1)
+    elif [ -f /etc/oracle-release ]; then
+        v=$(grep -oE '[0-9]+' /etc/oracle-release | head -1)
+    elif [ -f /etc/os-release ]; then
+        v=$(grep -E '^VERSION_ID=' /etc/os-release | grep -oE '[0-9]+' | head -1)
+    fi
+    if [ -z "$v" ]; then
+        log_warning "Не удалось определить мажорную версию дистрибутива — предполагаю 9"
+        v="9"
+    fi
+    printf '%s' "$v"
+}
+
+# Установка kmod-xt_u32 через elrepo с ЯВНОЙ проверкой результата
+install_u32_module_elrepo() {
+    local rel elrepo_url sudo_cmd
+    if [ "$(id -u)" -eq 0 ]; then sudo_cmd=""; else sudo_cmd="sudo"; fi
+
+    if ! command -v dnf >/dev/null 2>&1; then
+        log_error "dnf не найден — установка kmod-xt_u32 поддерживается только на RHEL-совместимых системах (Alma/Rocky/CentOS)"
+        return 1
+    fi
+
+    rel=$(detect_el_major)
+    case "$rel" in
+        8)  elrepo_url="https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm" ;;
+        10) elrepo_url="https://www.elrepo.org/elrepo-release-10.el10.elrepo.noarch.rpm" ;;
+        *)  rel="9"; elrepo_url="https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm" ;;
+    esac
+
+    if $sudo_cmd dnf repolist 2>/dev/null | grep -qi 'elrepo'; then
+        log_info "Репозиторий elrepo уже подключён"
+    else
+        log_info "Подключение репозитория elrepo (RHEL/CentOS ${rel}.x)..."
+        if ! $sudo_cmd dnf install -y "$elrepo_url"; then
+            log_error "Не удалось подключить репозиторий elrepo ($elrepo_url)"
+            return 1
+        fi
+    fi
+
+    log_info "Установка модуля kmod-xt_u32..."
+    if ! $sudo_cmd dnf install -y kmod-xt_u32; then
+        log_error "Не удалось установить пакет kmod-xt_u32"
+        return 1
+    fi
+
+    # Явная загрузка и ПРОВЕРКА факта наличия модуля
+    $sudo_cmd modprobe xt_u32 2>/dev/null || modprobe xt_u32 2>/dev/null || true
+    if u32_module_available; then
+        log_success "Модуль xt_u32 загружен и доступен"
+        return 0
+    fi
+    log_error "Пакет kmod-xt_u32 установлен, но модуль xt_u32 НЕ загрузился (проверьте: modprobe xt_u32; lsmod | grep xt_u32)"
+    return 1
+}
+
+# ── GEOIP: обход SYN-лимита для IP вне РФ ───────────────────
+geoip_port() {
+    if [ -r "$PORT_FILE" ] && [ -n "$(cat "$PORT_FILE" 2>/dev/null)" ]; then
+        cat "$PORT_FILE"
+    else
+        echo "443"
+    fi
+}
+
+geoip_module_available() {
+    lsmod 2>/dev/null | grep -q '^xt_geoip' || \
+    { command -v iptables >/dev/null 2>&1 && iptables -m geoip -h >/dev/null 2>&1; }
+}
+
+geoip_rule_present() {
+    local port
+    port=$(geoip_port)
+    iptables -C INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null
+}
+
+# ── Пути к утилитам xt_geoip: не полагаемся только на PATH ──
+# На Debian/Ubuntu xt_geoip_dl и xt_geoip_build лежат в /usr/libexec/xtables-addons
+# (в PATH их нет), поэтому ищем их и в PATH, и в известных каталогах.
+GEOIP_TOOL_DIRS="/usr/libexec/xtables-addons /usr/lib/xtables-addons /usr/share/xtables-addons"
+
+_geoip_tool() {
+    local name="$1" d
+    if command -v "$name" >/dev/null 2>&1; then
+        command -v "$name"
+        return 0
+    fi
+    for d in $GEOIP_TOOL_DIRS; do
+        if [ -x "$d/$name" ]; then
+            printf '%s' "$d/$name"
+            return 0
+        fi
+    done
+    return 1
+}
+
+geoip_cron_script() {
+    local sudo_cmd
+    if [ "$(id -u)" -eq 0 ]; then sudo_cmd=""; else sudo_cmd="sudo"; fi
+    $sudo_cmd tee /etc/cron.daily/xt_geoip >/dev/null <<'GEOIP_CRON_EOF'
+#!/bin/bash
+# Обновление базы xt_geoip (GEOIP-обход SYN-лимита)
+set -e
+mkdir -p /usr/share/xt_geoip
+cd /usr/share/xt_geoip
+find_geoip_tool() {
+    local n="$1" d
+    if command -v "$n" >/dev/null 2>&1; then command -v "$n"; return 0; fi
+    for d in /usr/libexec/xtables-addons /usr/lib/xtables-addons /usr/share/xtables-addons; do
+        if [ -x "$d/$n" ]; then printf '%s' "$d/$n"; return 0; fi
+    done
+    return 1
+}
+DL=$(find_geoip_tool xt_geoip_dl) || { echo "xt_geoip_dl не найден" >&2; exit 1; }
+BLD=$(find_geoip_tool xt_geoip_build) || { echo "xt_geoip_build не найден" >&2; exit 1; }
+"$DL"
+"$BLD" -D /usr/share/xt_geoip
+GEOIP_CRON_EOF
+    $sudo_cmd chmod +x /etc/cron.daily/xt_geoip
+    log_info "Cron-задача обновления базы: /etc/cron.daily/xt_geoip"
+}
+
+install_geoip_bypass() {
+    local port sudo_cmd geoip_dl geoip_build ipt_err ip6t_err
+    if [ "$(id -u)" -eq 0 ]; then sudo_cmd=""; else sudo_cmd="sudo"; fi
+    port=$(geoip_port)
+
+    log_info "Установка GEOIP-обхода SYN-лимита (порт $port, страны вне РФ: $GEOIP_CC_LIST)"
+
+    # 1) Пакеты xtables-addons (подбор по ОС)
+    if ! geoip_module_available; then
+        if command -v apt-get >/dev/null 2>&1; then
+            log_info "Установка xtables-addons (APT)..."
+            $sudo_cmd apt-get update -qq 2>/dev/null || true
+            $sudo_cmd apt-get install -y xtables-addons-common xtables-addons-dkms libtext-csv-perl curl unzip || true
+        elif command -v dnf >/dev/null 2>&1; then
+            log_info "Установка xtables-addons (DNF)..."
+            $sudo_cmd dnf install -y xtables-addons libtext-csv-perl curl unzip || true
+        else
+            log_error "Не найден пакетный менеджер (apt/dnf) — установите xtables-addons вручную"
+            return 1
+        fi
+        $sudo_cmd modprobe xt_geoip 2>/dev/null || modprobe xt_geoip 2>/dev/null || true
+    fi
+
+    if ! geoip_module_available; then
+        log_error "Модуль xt_geoip недоступен после установки xtables-addons (проверьте: modprobe xt_geoip)"
+        return 1
+    fi
+
+    # 2) База GeoIP: скачивание и сборка (утилиты ищем в PATH и в известных каталогах)
+    log_info "Скачивание и сборка базы GeoLite2 Country..."
+    $sudo_cmd mkdir -p /usr/share/xt_geoip
+    if ! geoip_dl=$(_geoip_tool xt_geoip_dl); then
+        log_error "Утилита xt_geoip_dl не найдена (проверьте пакет xtables-addons-common)"
+        return 1
+    fi
+    if ! geoip_build=$(_geoip_tool xt_geoip_build); then
+        log_error "Утилита xt_geoip_build не найдена (проверьте пакет xtables-addons-common)"
+        return 1
+    fi
+    ( cd /usr/share/xt_geoip && $sudo_cmd "$geoip_dl" ) || true
+    if ! ls /usr/share/xt_geoip/*.iv4 >/dev/null 2>&1; then
+        $sudo_cmd "$geoip_build" -D /usr/share/xt_geoip 2>/dev/null || \
+            ( cd /usr/share/xt_geoip && $sudo_cmd "$geoip_build" ) || true
+    fi
+    if ls /usr/share/xt_geoip/*.iv4 >/dev/null 2>&1; then
+        log_success "База GeoIP собрана (/usr/share/xt_geoip/*.iv4)"
+    else
+        log_warning "База GeoIP не найдена в /usr/share/xt_geoip — без базы правило GEOIP добавить НЕ удастся (iptables вернёт ошибку)"
+    fi
+
+    # 3) Правило INPUT первым (идемпотентно: снять дубли, затем вставить)
+    while iptables -C INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null; do
+        iptables -D INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null || break
+    done
+    if ! ipt_err=$(iptables -I INPUT 1 -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>&1); then
+        log_error "Не удалось добавить правило GEOIP: ${ipt_err:-неизвестная ошибка}"
+        return 1
+    fi
+    log_success "Правило IPv4 добавлено: INPUT 1 TCP/$port ! --src-cc $GEOIP_CC_LIST -j ACCEPT"
+
+    # 4) IPv6 (по возможности)
+    if command -v ip6tables >/dev/null 2>&1; then
+        while ip6tables -C INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null; do
+            ip6tables -D INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null || break
+        done
+        if ! ip6t_err=$(ip6tables -I INPUT 1 -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>&1); then
+            log_warning "IPv6-правило не добавлено: ${ip6t_err:-нет поддержки IPv6/базы .iv6} — пропускаю"
+        else
+            log_success "Правило IPv6 добавлено"
+        fi
+    else
+        log_warning "ip6tables не найден — IPv6-правило пропущено"
+    fi
+
+    # 5) Cron для обновления базы
+    geoip_cron_script
+
+    log_success "GEOIP-обход SYN-лимита установлен"
+    return 0
+}
+
+geoip_status() {
+    local port
+    port=$(geoip_port)
+    echo ""
+    echo -e "  ${BOLD}Статус GEOIP-обхода SYN-лимита${NC}"
+    if geoip_module_available; then
+        echo -e "  Модуль xt_geoip: ${GREEN}доступен${NC}"
+    else
+        echo -e "  Модуль xt_geoip: ${RED}не доступен${NC}"
+    fi
+    if geoip_rule_present; then
+        echo -e "  Правило INPUT (TCP/$port): ${GREEN}установлено${NC}"
+        iptables -L INPUT -n --line-numbers 2>/dev/null | grep -- "--dport $port" | head -3 | sed 's/^/    /'
+    else
+        echo -e "  Правило INPUT (TCP/$port): ${RED}отсутствует${NC}"
+    fi
+    if ls /usr/share/xt_geoip/*.iv4 >/dev/null 2>&1; then
+        echo -e "  База GeoIP: ${GREEN}есть${NC} ($(ls /usr/share/xt_geoip/*.iv4 2>/dev/null | head -1))"
+    else
+        echo -e "  База GeoIP: ${RED}нет${NC} (/usr/share/xt_geoip)"
+    fi
+    if [ -x /etc/cron.daily/xt_geoip ]; then
+        echo -e "  Cron: ${GREEN}/etc/cron.daily/xt_geoip${NC}"
+    else
+        echo -e "  Cron: ${RED}отсутствует${NC}"
+    fi
+    echo ""
+}
+
+remove_geoip_bypass() {
+    local port sudo_cmd
+    if [ "$(id -u)" -eq 0 ]; then sudo_cmd=""; else sudo_cmd="sudo"; fi
+    port=$(geoip_port)
+    log_info "Удаление GEOIP-обхода SYN-лимита (порт $port)..."
+    while iptables -C INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null; do
+        iptables -D INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null || break
+    done
+    if command -v ip6tables >/dev/null 2>&1; then
+        while ip6tables -C INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null; do
+            ip6tables -D INPUT -p tcp --dport "$port" -m geoip ! --src-cc "$GEOIP_CC_LIST" -j ACCEPT 2>/dev/null || break
+        done
+    fi
+    if [ -f /etc/cron.daily/xt_geoip ]; then
+        $sudo_cmd rm -f /etc/cron.daily/xt_geoip
+        log_info "Cron-задача удалена"
+    fi
+    log_success "GEOIP-обход SYN-лимита удалён"
+}
+
+_geoip_pause() {
+    if { : </dev/tty; } 2>/dev/null; then
+        echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
+        read -rsn1 </dev/tty
+    fi
+}
+
+geoip_menu() {
+    while true; do
+        clear 2>/dev/null || true
+        echo ""
+        echo -e "  ${BOLD}GEOIP-обход SYN-лимита${NC} ${DIM}(IP вне РФ не проходят через SYN-лимит)${NC}"
+        echo -e "  ${DIM}═══════════════════════════════════════════════════════════${NC}"
+        echo ""
+        # ── Статус выводится шапкой прямо в меню (без отдельной кнопки) ──
+        geoip_status
+        echo ""
+        echo -e "  ${CYAN}[1]${NC}  ${BOLD}Установить${NC}"
+        echo -e "  ${CYAN}[2]${NC}  ${BOLD}Удалить${NC}"
+        echo -e "  ${CYAN}[0]${NC}  ${BOLD}Назад${NC}"
+        echo ""
+        echo -en "  ${BOLD}Выбор:${NC} "
+        { read -r geoip_choice </dev/tty; } 2>/dev/null || return 1
+        case "$geoip_choice" in
+            1) install_geoip_bypass; _geoip_pause ;;
+            2) remove_geoip_bypass; _geoip_pause ;;
+            0) return 0 ;;
+            "") echo; return 0 ;;
+            *) echo "  Неверный выбор"; sleep 0.3 ;;
+        esac
+    done
+}
+
+# ── Бэкап и восстановление правил/фикса (пункт [B] меню правил) ──
+_rules_backup_fix() {
+    local bp="/opt/mtpr-simple/data/backup_panel.sh"
+    if [ ! -f "$bp" ]; then
+        local self_dir
+        self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+        [ -f "$self_dir/backup_panel.sh" ] && bp="$self_dir/backup_panel.sh"
+    fi
+    if [ ! -f "$bp" ]; then
+        log_error "backup_panel.sh не найден (ожидается /opt/mtpr-simple/data/backup_panel.sh)"
+        return 1
+    fi
+    log_info "Запуск бэкапа/восстановления правил и фикса (scope=fix)..."
+    bash "$bp" --scope fix
+}
+
 # ── УСТАНОВКА SYN FIX (с поддержкой аргументов) ────────────
 install_syn_fix() {
     local ports_input
@@ -278,6 +610,8 @@ install_syn_fix() {
     local auto_install=false
     local forced_ports=""
     local FIX_TYPE="new"   # new=v3, old=v2, docker_smart=nft, zapret2
+    local GEOIP_MODE=false
+    local geoip_action="menu"
 
     # ── Парсинг аргументов ──────────────────────────────────
     while [[ $# -gt 0 ]]; do
@@ -300,11 +634,32 @@ install_syn_fix() {
                 esac
                 shift 2
                 ;;
+            -geoip)
+                if [[ "$2" =~ ^(install|status|remove|menu)$ ]]; then
+                    geoip_action="$2"
+                    shift 2
+                else
+                    geoip_action="menu"
+                    shift
+                fi
+                GEOIP_MODE=true
+                ;;
             *)
                 shift
                 ;;
         esac
     done
+
+    # ── Режим GEOIP (обход SYN-лимита для IP вне РФ) ────────
+    if [ "$GEOIP_MODE" = true ]; then
+        case "$geoip_action" in
+            install) install_geoip_bypass ;;
+            status)  geoip_status ;;
+            remove)  remove_geoip_bypass ;;
+            *)       geoip_menu ;;
+        esac
+        return $?
+    fi
 
     # ── Если auto_install и тип zapret2 – вызываем отдельную функцию ──
     if [ "$auto_install" = true ] && [ "$FIX_TYPE" = "zapret2" ]; then
@@ -332,6 +687,15 @@ install_syn_fix() {
         return $?
     fi
 
+    # ── Интерактивный режим требует tty ──────────────────────
+    # Без tty (setsid/SSH/`<&-`) все `read` дают EOF и меню молча
+    # ставит SYN FIX с дефолтами — это и был инцидент no-args.
+    if [ "$auto_install" = false ] && ! { : </dev/tty; } 2>/dev/null; then
+        log_error "Нет доступа к /dev/tty — интерактивное меню недоступно, установка отменена."
+        log_info "Неинтерактивно: bash data/rules.sh -auto_install -port 443 -type v3"
+        return 1
+    fi
+
     # ── Далее интерактивный режим или auto_install для v2/v3 ──
 
     if [ "$auto_install" = true ]; then
@@ -344,8 +708,8 @@ install_syn_fix() {
         fi
     else
         echo ""
-        if [ -r /dev/tty ]; then
-            clear
+        if { : </dev/tty; } 2>/dev/null; then
+            clear 2>/dev/null || true
             echo -e ""
             echo -e "  ${BOLD}Меню установки MTPRoto FIX V1.21"
             echo -e "  ${DIM}═══════════════════════════════════════════════════════════════"
@@ -355,20 +719,28 @@ install_syn_fix() {
             echo -e "  ${NC}${BOLD}Введите порт для SYN FIX ${DIM}(Например: 443)"
             echo -e "  ${NC}${BOLD}Либо введите порты через запятую ${DIM}(Например: 443,8443) "
             echo -e ""
-            echo -en "  ${NC}${BOLD}Ввод ${GREEN}${BOLD}(По умолчанию Enter - 443)${NC}${BOLD}:${NC}"
+            echo -en "  ${NC}${BOLD}Ввод ${GREEN}${BOLD}(По умолчанию Enter - 443, 0 - выход)${NC}${BOLD}:${NC}"
             read -r ports_input </dev/tty
         else
             echo -e "  ${NC}${BOLD}Введите порт для SYN FIX ${DIM}(Например: 443)"
             echo -e "  ${NC}${BOLD}Либо введите порты через запятую ${DIM}(Например: 443,8443) "
             echo -e ""
-            echo -en "  ${NC}${BOLD}Ввод ${GREEN}${BOLD}(По умолчанию Enter - 443)${NC}${BOLD}:${NC}"
-            read -r ports_input
+            echo -en "  ${NC}${BOLD}Ввод ${GREEN}${BOLD}(По умолчанию Enter - 443, 0 - выход)${NC}${BOLD}:${NC}"
+            { read -r ports_input; } 2>/dev/null || true
         fi
+        case "$ports_input" in
+            0|q|Q)
+                echo ""
+                log_info "Выход без установки SYN FIX"
+                return 0
+                ;;
+        esac
         if [ -z "$ports_input" ]; then
             ports_input="443"
         fi
 
-        clear
+        while true; do
+        clear 2>/dev/null || true
         echo ""
         echo -e "  ${BOLD}Выберите вариант правил ниже"
         echo -e "  ${DIM}══════════════════════════════════════════════"
@@ -392,13 +764,32 @@ install_syn_fix() {
         echo -e "${DIM}  Если TTL <65 и length 64 -> это ios и принимаем пакеты без лимита"
         echo -e "${DIM}  Иначе -> это другое ус-во и ставим SYN 1 пакет в 1.1 сек."
         echo ""
-        if [ -r /dev/tty ]; then
+        echo -e "  ${CYAN}[B]${NC}  ${BOLD}Бэкап и восстановление правил/фикса${NC} ${DIM}(backup_panel.sh --scope fix)${NC}"
+        echo -e "  ${CYAN}[0]${NC}  ${BOLD}Назад/Выход${NC} ${DIM}(ничего не устанавливать)${NC}"
+        echo ""
+        if { : </dev/tty; } 2>/dev/null; then
             echo -en "  ${NC}${BOLD}Ввод (По умолчанию - ${GREEN}${BOLD}1 или enter${NC}${BOLD}):${NC} "
             read -r fix_choice </dev/tty
         else
             echo -en "  ${NC}${BOLD}Ввод (${GREEN}${BOLD}По умолчанию - 1(Enter)${NC}${BOLD}):${NC} "
-            read -r fix_choice
+            { read -r fix_choice; } 2>/dev/null || true
         fi
+
+        case "$fix_choice" in
+            0|q|Q)
+                echo ""
+                log_info "Выход без установки SYN FIX"
+                return 0
+                ;;
+            B|b|Б|б)
+                echo ""
+                _rules_backup_fix
+                echo ""
+                echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
+                { read -rsn1 </dev/tty; } 2>/dev/null || true
+                continue
+                ;;
+        esac
 
         if [ -z "$fix_choice" ] || [ "$fix_choice" = "1" ]; then
             FIX_TYPE="new"
@@ -419,6 +810,8 @@ install_syn_fix() {
             log_warning "Неверный выбор, используем первый вариант"
             FIX_TYPE="new"
         fi
+        break
+        done
     fi
 
     # ── Если выбран Zapret2 fix в интерактивном режиме ────────
@@ -459,7 +852,7 @@ install_syn_fix() {
 
     if [ ${#valid_ports[@]} -eq 0 ]; then
         log_error "Нет корректных портов для установки"
-        if [ "$auto_install" = false ] && [ -r /dev/tty ]; then
+        if [ "$auto_install" = false ] && { : </dev/tty; } 2>/dev/null; then
             echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
             read -rsn1 </dev/tty
         fi
@@ -483,7 +876,7 @@ install_syn_fix() {
                 dnf install -y -q nftables
             else
                 log_error "Не удалось установить nftables автоматически"
-                if [ "$auto_install" = false ] && [ -r /dev/tty ]; then
+                if [ "$auto_install" = false ] && { : </dev/tty; } 2>/dev/null; then
                     echo -e "  ${GRAY}Нажмите любую клавишу${NC}"
                     read -rsn1 </dev/tty
                 fi
@@ -502,12 +895,12 @@ install_syn_fix() {
             echo ""
             log_warning "${BOLD}ВНИМАНИЕ:${NC} Данная настройка изменит файрвол системы."
             echo ""
-            if [ -r /dev/tty ]; then
+            if { : </dev/tty; } 2>/dev/null; then
                 echo -en "  ${BOLD}Продолжить установку? Y/n:${NC} "
                 read -r confirm </dev/tty
             else
                 echo -en "  ${BOLD}Продолжить установку? Y/n:${NC} "
-                read -r confirm
+                { read -r confirm; } 2>/dev/null || true
             fi
             if [[ -z "$confirm" || "$confirm" =~ ^[yY]$ ]]; then
                 : # продолжить
@@ -564,7 +957,7 @@ CLASSIC_RULES_EOF
             log_success "NFT правила применены успешно"
         else
             log_error "Ошибка применения NFT правил"
-            if [ "$auto_install" = false ] && [ -r /dev/tty ]; then
+            if [ "$auto_install" = false ] && { : </dev/tty; } 2>/dev/null; then
                 echo -e "  ${GRAY}Нажмите любую клавишу${NC}"
                 read -rsn1 </dev/tty
             fi
@@ -595,7 +988,7 @@ SERVICE_NFT_EOF
         log_info "Автозапуск mtpr-nft-synfix.service: $(systemctl is-enabled mtpr-nft-synfix.service 2>/dev/null || echo неизвестно)"
 
         log_success "SYN FIX (nftables) успешно установлен на порты: $ports_str"
-        if [ "$auto_install" = false ] && [ -r /dev/tty ]; then
+        if [ "$auto_install" = false ] && { : </dev/tty; } 2>/dev/null; then
             echo -e "  ${GRAY}Нажмите любую клавишу${NC}"
             read -rsn1 </dev/tty
         fi
@@ -614,12 +1007,12 @@ SERVICE_NFT_EOF
         echo ""
         log_warning "${BOLD}ВНИМАНИЕ:${NC} Данная настройка изменит файрвол системы."
         echo ""
-        if [ -r /dev/tty ]; then
+        if { : </dev/tty; } 2>/dev/null; then
             echo -en "  ${BOLD}Продолжить установку? [Y/n]:${NC} "
             read -r confirm </dev/tty
         else
             echo -en "  ${BOLD}Продолжить установку? [Y/n]:${NC} "
-            read -r confirm
+            { read -r confirm; } 2>/dev/null || true
         fi
         if [[ -z "$confirm" || "$confirm" =~ ^[yY]$ ]]; then
             : # продолжить
@@ -630,96 +1023,33 @@ SERVICE_NFT_EOF
         fi
     fi
 
-    generate_apply_script "$FIX_TYPE" "${valid_ports[@]}"
-    generate_service_unit
-    systemctl daemon-reload || log_warning "systemctl daemon-reload завершился с ошибкой"
-
-    local apply_output
-    local apply_exit_code
-    apply_output=$(PORT="$ports_str" /opt/mtpr-simple/apply-mtpr-synfix.sh 2>&1)
-    apply_exit_code=$?
-
-    if [ "$FIX_TYPE" = "new" ] && [ $apply_exit_code -ne 0 ] && echo "$apply_output" | grep -q "u32"; then
-        if [ "$auto_install" = false ]; then
-            echo ""
-            echo -e "  ${YELLOW}[!]${NC} Обнаружена ошибка: модуль u32 отсутствует"
-            echo -e "  ${YELLOW}[!]${NC} Для работы нового варианта SYN FIX требуется установить модуль xt_u32"
-            echo ""
+    # ── Для v3 (u32) заранее убеждаемся, что модуль xt_u32 реально доступен ──
+    if [ "$FIX_TYPE" = "new" ] && ! u32_module_available; then
+        echo ""
+        echo -e "  ${YELLOW}[!]${NC} Модуль xt_u32 не найден на этой системе"
+        echo -e "  ${YELLOW}[!]${NC} Он необходим для варианта V3 (iptables + u32)"
+        echo ""
+        if [ "$auto_install" = true ]; then
+            log_info "Автоматическая установка kmod-xt_u32 через elrepo..."
+            if ! install_u32_module_elrepo; then
+                log_error "Модуль u32 недоступен. Автоматическая установка не удалась."
+                return 1
+            fi
+        else
             echo -e "  ${BOLD}Установить необходимый модуль xt_u32?${NC}"
             echo -e "  ${GREEN}Enter/Y${NC} — установить и продолжить"
             echo -e "  ${RED}N/n${NC} — отменить установку и вернуться в меню"
             echo ""
-            if [ -r /dev/tty ]; then
+            if { : </dev/tty; } 2>/dev/null; then
                 echo -en "  ${BOLD}Ввод:${NC} "
-                read -r install_u32 </dev/tty
+                { read -r install_u32 </dev/tty; } 2>/dev/null || install_u32=""
             else
                 echo -en "  ${BOLD}Ввод:${NC} "
-                read -r install_u32
+                read -r install_u32 2>/dev/null || install_u32=""
             fi
-
             if [[ -z "$install_u32" || "$install_u32" =~ ^[yY]$ ]]; then
-                echo ""
-                log_info "Установка модуля xt_u32 для AlmaLinux..."
-                echo ""
-                
-                local ALMA_VERSION=""
-                if [ -f /etc/almalinux-release ]; then
-                    ALMA_VERSION=$(grep -oE '[0-9]+' /etc/almalinux-release | head -1)
-                elif [ -f /etc/os-release ]; then
-                    ALMA_VERSION=$(grep -E '^VERSION_ID=' /etc/os-release | cut -d'"' -f2 | cut -d'.' -f1)
-                fi
-                
-                if [ -z "$ALMA_VERSION" ]; then
-                    ALMA_VERSION="9"
-                    echo -e "  ${YELLOW}[!]${NC} Не удалось определить версию AlmaLinux, используем 9"
-                fi
-                
-                echo -e "  ${BLUE}[i]${NC} Обнаружена версия AlmaLinux: ${ALMA_VERSION}"
-                echo ""
-                
-                local ELREPO_URL=""
-                if [ "$ALMA_VERSION" = "10" ]; then
-                    ELREPO_URL="https://www.elrepo.org/elrepo-release-10.el10.elrepo.noarch.rpm"
-                else
-                    ELREPO_URL="https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm"
-                fi
-                
-                echo -e "  ${BLUE}[i]${NC} Добавление репозитория elrepo (версия ${ALMA_VERSION})..."
-                if sudo dnf install -y "$ELREPO_URL" 2>&1; then
-                    echo -e "  ${GREEN}[✓]${NC} Репозиторий elrepo добавлен"
-                else
-                    echo -e "  ${RED}[✗]${NC} Не удалось добавить репозиторий elrepo"
-                    if [ -r /dev/tty ]; then
-                        echo -e "  ${GRAY}Нажмите любую клавишу${NC}"
-                        read -rsn1 </dev/tty
-                    fi
-                    return 1
-                fi
-                
-                echo ""
-                echo -e "  ${BLUE}[i]${NC} Установка модуля kmod-xt_u32..."
-                if sudo dnf install -y kmod-xt_u32 2>&1; then
-                    echo -e "  ${GREEN}[✓]${NC} Модуль kmod-xt_u32 успешно установлен"
-                    echo ""
-                    log_info "Повторная попытка применения правил..."
-                    echo ""
-                    
-                    PORT="$ports_str" /opt/mtpr-simple/apply-mtpr-synfix.sh
-                    systemctl enable mtpr-synfix.service \
-                        || log_warning "Не удалось выполнить systemctl enable mtpr-synfix.service"
-                    systemctl restart mtpr-synfix.service \
-                        || log_error "Не удалось выполнить systemctl restart mtpr-synfix.service (правила в ядре применены, но автозапуск не активен)"
-                    log_info "Автозапуск mtpr-synfix.service: $(systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно)"
-                    
-                    log_success "SYN FIX успешно установлен на порты: $ports_str"
-                    if [ -r /dev/tty ]; then
-                        echo -e "  ${GRAY}Нажмите любую клавишу${NC}"
-                        read -rsn1 </dev/tty
-                    fi
-                else
-                    echo -e "  ${RED}[✗]${NC} Не удалось установить модуль kmod-xt_u32"
-                    echo -e "  ${YELLOW}[!]${NC} Попробуйте выбрать старый вариант фикса (TTL+Length)"
-                    if [ -r /dev/tty ]; then
+                if ! install_u32_module_elrepo; then
+                    if { : </dev/tty; } 2>/dev/null; then
                         echo -e "  ${GRAY}Нажмите любую клавишу${NC}"
                         read -rsn1 </dev/tty
                     fi
@@ -727,37 +1057,65 @@ SERVICE_NFT_EOF
                 fi
             else
                 log_info "Установка отменена"
-                if [ -r /dev/tty ]; then
+                if { : </dev/tty; } 2>/dev/null; then
                     echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
                     read -rsn1 </dev/tty
                 fi
-                return 1
+                return 0
             fi
-        else
-            # Автоматический режим: просто выводим ошибку и выходим
-            log_error "Модуль u32 отсутствует. Для автоматической установки требуется xt_u32."
+        fi
+    fi
+
+    generate_apply_script "$FIX_TYPE" "${valid_ports[@]}"
+    generate_service_unit
+    systemctl daemon-reload || log_warning "systemctl daemon-reload завершился с ошибкой"
+
+    local apply_output
+    local apply_exit_code
+    if apply_output=$(PORT="$ports_str" /opt/mtpr-simple/apply-mtpr-synfix.sh 2>&1); then
+        apply_exit_code=0
+    else
+        apply_exit_code=$?
+    fi
+
+    # ── Явная проверка результата: успех НЕ определяется пустым выводом + кодом 0 ──
+    if [ "$FIX_TYPE" = "new" ]; then
+        if ! iptables -t mangle -C PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400 2>/dev/null; then
+            log_error "SYN FIX (v3/u32) НЕ применён: правило u32 в таблице mangle отсутствует"
+            echo -e "  ${DIM}apply_output:${NC} ${apply_output:-<пусто>}"
+            if [ "$auto_install" = false ] && { : </dev/tty; } 2>/dev/null; then
+                echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
+                read -rsn1 </dev/tty
+            fi
             return 1
         fi
-    elif [ $apply_exit_code -ne 0 ]; then
+    fi
+
+    if [ $apply_exit_code -ne 0 ]; then
         log_error "Ошибка применения правил iptables:"
         echo "$apply_output"
-        if [ "$auto_install" = false ] && [ -r /dev/tty ]; then
+        if [ "$auto_install" = false ] && { : </dev/tty; } 2>/dev/null; then
             echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
             read -rsn1 </dev/tty
         fi
         return 1
-    else
-        systemctl enable mtpr-synfix.service \
-            || log_warning "Не удалось выполнить systemctl enable mtpr-synfix.service"
-        systemctl restart mtpr-synfix.service \
-            || log_error "Не удалось выполнить systemctl restart mtpr-synfix.service (правила в ядре применены, но автозапуск не активен)"
-        log_info "Автозапуск mtpr-synfix.service: $(systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно)"
-        log_success "SYN FIX успешно установлен на порты: $ports_str"
-        if [ "$auto_install" = false ] && [ -r /dev/tty ]; then
-            echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
-            read -rsn1 </dev/tty
-        fi
     fi
+
+    systemctl enable mtpr-synfix.service \
+        || log_warning "Не удалось выполнить systemctl enable mtpr-synfix.service"
+    systemctl restart mtpr-synfix.service \
+        || log_error "Не удалось выполнить systemctl restart mtpr-synfix.service (правила в ядре применены, но автозапуск не активен)"
+    log_info "Автозапуск mtpr-synfix.service: $(systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно)"
+    log_success "SYN FIX успешно установлен на порты: $ports_str"
+    if [ "$auto_install" = false ] && { : </dev/tty; } 2>/dev/null; then
+        echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
+        read -rsn1 </dev/tty || true
+    fi
+
+    # Успешное завершение интерактивной установки: rc=0 независимо от
+    # того, попал ли последний паузный `read` в EOF (иначе `-menu` из pty
+    # завершался бы с кодом 1 и это маскировалось лишь прежним `|| true`).
+    return 0
 }
 
 # ── Функция автоматической установки nftables ──────────────
@@ -923,3 +1281,55 @@ remove_syn_fix() {
 
     log_success "SYN FIX (iptables + nftables) удалён"
 }
+
+# ── Точка входа при прямом запуске файла ────────────────────
+#   bash data/rules.sh -geoip            -> меню GEOIP (шапка-статус, [1]/[2]/[0])
+#   bash data/rules.sh -geoip install    -> установить GEOIP (неинтерактивно)
+#   bash data/rules.sh -geoip status     -> статус GEOIP (неинтерактивно)
+#   bash data/rules.sh -geoip remove     -> удалить GEOIP (неинтерактивно)
+#   bash data/rules.sh [-menu]           -> интерактивное меню фикса
+_rules_usage() {
+    cat <<'USAGE'
+Использование: bash data/rules.sh [КЛЮЧ]
+
+  (без ключа)        интерактивное меню фикса (только при наличии tty)
+  -menu              интерактивное меню фикса (только при наличии tty)
+  -geoip             меню GEOIP (шапка-статус, [1]/[2]/[0])
+  -geoip install     установить GEOIP (неинтерактивно)
+  -geoip status      статус GEOIP (неинтерактивно)
+  -geoip remove      удалить GEOIP (неинтерактивно)
+  -auto_install ...  неинтерактивная установка фикса
+USAGE
+}
+
+_rules_entrypoint() {
+    case "${1:-}" in
+        -geoip)
+            if [ -n "${2:-}" ]; then
+                install_syn_fix -geoip "$2"
+            else
+                install_syn_fix -geoip
+            fi
+            ;;
+        -menu)
+            install_syn_fix
+            ;;
+        "")
+            # Без аргументов: меню только при доступном tty.
+            # Без tty (setsid/SSH/`<&-`) — печатаем справку и НИЧЕГО не устанавливаем.
+            if { : </dev/tty; } 2>/dev/null; then
+                install_syn_fix
+            else
+                _rules_usage
+            fi
+            ;;
+        *)
+            install_syn_fix "$@"
+            ;;
+    esac
+}
+
+# Запускать только при прямом вызове (не при `source` из main.sh/node-manager)
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    _rules_entrypoint "$@"
+fi

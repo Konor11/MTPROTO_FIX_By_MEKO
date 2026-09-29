@@ -26,7 +26,7 @@ trim() {
 # ── Функция получения текущего пути к конфигу MTG ──────────
 get_config_path() {
     if [ -f "$CONFIG_PATH_FILE" ] && [ -s "$CONFIG_PATH_FILE" ]; then
-        path=$(cat "$CONFIG_PATH_FILE")
+        local path; path=$(cat "$CONFIG_PATH_FILE")
         if [ "$path" != "skip" ]; then
             echo "$path"
             return 0
@@ -94,11 +94,13 @@ get_mtg_secret() {
 
 # ── Получение публичного IP ──────────────────────────────────
 get_public_ip() {
-    local _ip=""
-    _ip=$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null) ||
-    _ip=$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null) ||
-    _ip=$(curl -4 -fsS --max-time 5 https://icanhazip.com 2>/dev/null) ||
-    _ip=""
+    local _ip="" _u=""
+    # Перебираем сервисы и требуем НЕПУСТОЙ ответ: curl с rc=0 и пустым
+    # телом иначе «защёлкнул» бы пустой IP вместо фолбэка.
+    for _u in https://api.ipify.org https://ifconfig.me https://icanhazip.com; do
+        _ip=$(curl -4 -fsS --max-time 5 "$_u" 2>/dev/null | tr -d '[:space:]')
+        [ -n "$_ip" ] && break
+    done
     echo "$_ip"
 }
 
@@ -122,14 +124,15 @@ install_mtg_binary() {
     esac
 
     # Скачиваем последнюю версию
-    local tmp_dir=$(mktemp -d)
-    cd "$tmp_dir"
+    local tmp_dir
+    tmp_dir=$(mktemp -d) || { echo -e "  ${RED}[✗] Не удалось создать временный каталог${NC}"; return 1; }
+    cd "$tmp_dir" || { echo -e "  ${RED}[✗] Не удалось перейти в $tmp_dir${NC}"; rm -rf "$tmp_dir"; return 1; }
 
     echo -e "  ${BLUE}[i]${NC} Загрузка MTG для архитектуры ${mtg_arch}..."
     
     # Получаем URL последней версии
     local download_url
-    download_url=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest | grep -o "https://.*mtg-.*-linux-${mtg_arch}.*\.tar\.gz" | head -1)
+    download_url=$(curl -fsSL --max-time 20 https://api.github.com/repos/9seconds/mtg/releases/latest | grep -o "https://.*mtg-.*-linux-${mtg_arch}.*\.tar\.gz" | head -1)
     
     if [ -z "$download_url" ]; then
         echo -e "  ${RED}[✗] Не удалось найти последнюю версию MTG${NC}"
@@ -146,7 +149,11 @@ install_mtg_binary() {
     fi
 
     # Распаковываем
-    tar -xzf mtg.tar.gz
+    if ! tar -xzf mtg.tar.gz; then
+        echo -e "  ${RED}[✗] Ошибка распаковки архива MTG${NC}"
+        cd / && rm -rf "$tmp_dir"
+        return 1
+    fi
     local mtg_bin
     mtg_bin=$(find . -type f -name "mtg" ! -path "*/.*" 2>/dev/null | head -1)
     
@@ -157,14 +164,17 @@ install_mtg_binary() {
     fi
 
     # Устанавливаем
-    mv "$mtg_bin" /usr/local/bin/mtg
-    chmod +x /usr/local/bin/mtg
+    if ! mv "$mtg_bin" /usr/local/bin/mtg || ! chmod +x /usr/local/bin/mtg; then
+        echo -e "  ${RED}[✗] Не удалось установить бинарник MTG в /usr/local/bin${NC}"
+        cd / && rm -rf "$tmp_dir"
+        return 1
+    fi
 
     cd / && rm -rf "$tmp_dir"
 
     # Проверяем установку
     if command -v mtg >/dev/null 2>&1; then
-        local version=$(get_mtg_version)
+        local version; version=$(get_mtg_version)
         echo -e "  ${GREEN}✓${NC} MTG успешно установлен (версия: ${version})"
         return 0
     else
@@ -182,14 +192,15 @@ purge_mtg_silent() {
     rm -f /usr/local/bin/mtg
     rm -f /etc/mtg.toml
     rm -f "$CONFIG_PATH_FILE"
-    rm -f mtg-latest.tar.gz 2>/dev/null || true
-    rm -f mtg-*.tar.gz 2>/dev/null || true
-    rm -rf mtg-*/ 2>/dev/null || true
+    # Чистим остатки прежних установок только в известном каталоге (не в cwd)
+    rm -f /root/mtg-latest.tar.gz /root/mtg-*.tar.gz 2>/dev/null || true
+    rm -rf /root/mtg-*/ 2>/dev/null || true
 }
 
 # ── Функция проверки MTG (doctor) ────────────────────────────
 mtg_doctor() {
-    local config_path="/etc/mtg.toml"
+    local config_path
+    config_path=$(get_config_path)
     
     echo ""
     echo -e "  ${BOLD}${CYAN}Проверка MTG прокси${NC}"
@@ -199,7 +210,7 @@ mtg_doctor() {
         echo -e "  ${RED}[✗] Конфиг не найден: $config_path${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
@@ -212,7 +223,7 @@ mtg_doctor() {
         echo -e "  ${RED}[✗] Не удалось выполнить проверку. Убедитесь, что MTG запущен.${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
@@ -317,7 +328,7 @@ mtg_doctor() {
     
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция установки MTG ────────────────────────────────────
@@ -327,7 +338,7 @@ install_mtg() {
 
     # Проверяем, установлен ли уже бинарник
     if is_mtg_installed; then
-        local current_version=$(get_mtg_version)
+        local current_version; current_version=$(get_mtg_version)
         echo -e "  ${YELLOW}[!] Обнаружена старая версия MTG: ${current_version}${NC}"
         echo -e "  ${YELLOW}[!] Будет выполнена переустановка${NC}"
         echo ""
@@ -341,7 +352,7 @@ install_mtg() {
         echo -e "  ${RED}[✗] Не удалось установить MTG${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
 
@@ -353,7 +364,7 @@ install_mtg() {
     while true; do
         echo ""
         echo -en "  ${BOLD}Введите порт для MTG [${default_port}]:${NC} "
-        read -r port_input
+        { read -r port_input </dev/tty; } 2>/dev/null || true
         if [ -z "$port_input" ]; then
             port="$default_port"
             break
@@ -370,7 +381,7 @@ install_mtg() {
     echo ""
     echo -e "  ${DIM}Домен будет использован для Fake TLS (маскировка).${NC}"
     echo -en "  ${BOLD}Введите домен [rutube.ru]:${NC} "
-    read -r domain_input
+    { read -r domain_input </dev/tty; } 2>/dev/null || true
     if [ -z "$domain_input" ]; then
         domain_input="rutube.ru"
     fi
@@ -401,7 +412,7 @@ install_mtg() {
         echo -e "  ${RED}gen${NC} — перегенерировать новый секрет"
         echo ""
         echo -en "  ${BOLD}Ваш выбор:${NC} "
-        read -r secret_input
+        { read -r secret_input </dev/tty; } 2>/dev/null || true
         
         if [[ "$secret_input" =~ ^[Gg][Ee][Nn]$ ]]; then
             SECRET=$(mtg generate-secret --hex "$domain" 2>/dev/null)
@@ -415,6 +426,10 @@ install_mtg() {
             echo ""
             continue
         elif [[ -n "$secret_input" ]] && [[ ! "$secret_input" =~ ^[yY]$ ]]; then
+            if [[ ! "$secret_input" =~ ^[0-9a-fA-F]{32}$ ]] && [[ ! "$secret_input" =~ ^[0-9a-fA-F]{34}$ ]]; then
+                echo -e "  ${RED}[✗] Секрет должен быть hex-строкой из 32 или 34 символов (34 — с префиксом ee).${NC}"
+                continue
+            fi
             SECRET="$secret_input"
             echo ""
             echo -e "  ${GREEN}✓${NC} Использован секрет: ${CYAN}${SECRET}${NC}"
@@ -446,7 +461,7 @@ EOF
     echo -e "  ${BOLD}Добавить настройки TCP keep-alive для мобильных клиентов?${NC}"
     echo -e "  ${DIM}Это улучшает стабильность на iOS/Android.${NC}"
     echo -en "  ${BOLD}Добавить? [Y/n]:${NC} "
-    read -r add_keepalive
+    { read -r add_keepalive </dev/tty; } 2>/dev/null || true
     if [[ ! "$add_keepalive" =~ ^[nN]$ ]]; then
         cat >> /etc/mtg.toml << 'EOF'
 
@@ -467,7 +482,7 @@ EOF
     echo ""
     echo -e "  ${BOLD}Установить автозапуск через systemd?${NC}"
     echo -en "  ${BOLD}Установить? [Y/n]:${NC} "
-    read -r add_systemd
+    { read -r add_systemd </dev/tty; } 2>/dev/null || true
     if [[ ! "$add_systemd" =~ ^[nN]$ ]]; then
         cat > /etc/systemd/system/mtg.service << 'EOF'
 [Unit]
@@ -484,10 +499,13 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
-        systemctl enable mtg.service
-        systemctl start mtg.service
-        echo -e "  ${GREEN}✓${NC} Служба mtg.service установлена и запущена."
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable mtg.service 2>/dev/null || true
+        if systemctl start mtg.service; then
+            echo -e "  ${GREEN}✓${NC} Служба mtg.service установлена и запущена."
+        else
+            echo -e "  ${YELLOW}[!]${NC} Служба mtg.service установлена, но не запустилась. Проверьте: systemctl status mtg.service"
+        fi
     else
         echo -e "  ${YELLOW}[!] Для запуска используйте: mtg run /etc/mtg.toml${NC}"
     fi
@@ -496,7 +514,7 @@ EOF
     echo -e "  ${GREEN}✓${NC} Установка MTG завершена!"
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция открытия конфига ─────────────────────────────────
@@ -508,7 +526,7 @@ edit_config() {
         echo -e "  ${GRAY}Используйте пункт 4 для обновления пути к конфигу${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     echo ""
@@ -517,32 +535,32 @@ edit_config() {
         echo -e "  ${GRAY}После редактирования сохраните файл (Ctrl+O) и закройте (Ctrl+X)${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         nano "$config_path"
     elif command -v vim >/dev/null 2>&1; then
         echo -e "  ${YELLOW}[!] nano не установлен. Использую vim.${NC}"
         echo -e "  ${GRAY}Для сохранения: ESC → :wq, для выхода без сохранения: ESC → :q!${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         vim "$config_path"
     elif command -v vi >/dev/null 2>&1; then
         echo -e "  ${YELLOW}[!] Использую vi.${NC}"
         echo -e "  ${GRAY}Для сохранения: ESC → :wq, для выхода без сохранения: ESC → :q!${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         vi "$config_path"
     else
         echo -e "  ${RED}[✗] Ни один редактор не найден (nano, vim, vi)${NC}"
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     echo ""
     echo -e "  ${GREEN}[✓] Редактирование завершено"
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция перезапуска MTG ──────────────────────────────────
@@ -557,7 +575,7 @@ restart_mtg() {
     fi
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция просмотра логов ──────────────────────────────────
@@ -566,11 +584,11 @@ view_logs() {
     echo -e "  ${BLUE}[i]${NC} Просмотр логов MTG (Ctrl+C для выхода)..."
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
     journalctl -u mtg.service -f
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция удаления MTG ─────────────────────────────────────
@@ -587,12 +605,12 @@ purge_mtg() {
     echo -e "  ${YELLOW}[!] Это действие нельзя отменить!"
     echo -en "  ${BOLD}Продолжить удаление? [y/N]:${NC} "
     local confirm
-    read -r confirm
+    { read -r confirm </dev/tty; } 2>/dev/null || true
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
         echo -e "  ${GRAY}Удаление отменено${NC}"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
 
@@ -603,15 +621,17 @@ purge_mtg() {
     echo -e "  ${GREEN}[✓] MTG успешно удалён"
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция обновления пути к конфигу ──────────────────────
 update_config_path() {
     echo ""
-    default_path="/etc/mtg.toml"
+    local default_path="/etc/mtg.toml"
+    local input
+    local confirm
     echo -en "Укажите путь к конфигу MTG (Enter для ${default_path}, N/n для отмены): "
-    read -r input
+    { read -r input </dev/tty; } 2>/dev/null || { echo; return 1; }
     if [[ "$input" =~ ^[Nn]$ ]]; then
         echo -e "  ${GRAY}Возврат...${NC}"
         sleep 0.5
@@ -622,7 +642,7 @@ update_config_path() {
     fi
     if [ ! -f "$input" ]; then
         echo -e "  ${YELLOW}[!] Файл $input не найден. Сохранить путь всё равно? [y/N]${NC}"
-        read -r confirm
+        { read -r confirm </dev/tty; } 2>/dev/null || true
         if [[ ! "$confirm" =~ ^[yY]$ ]]; then
             echo -e "  ${GRAY}Отменено${NC}"
             return 1
@@ -633,7 +653,7 @@ update_config_path() {
     echo -e "  ${GREEN}[✓] Путь сохранён: $input"
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Функция показа ссылки ────────────────────────────────────
@@ -641,21 +661,26 @@ show_link() {
     echo ""
     echo -e  "  ${BLUE}[i]${NC} Генерация ссылки для подключения..."
     
+    local config_path
+    config_path=$(get_config_path)
     local secret
-    secret=$(sudo cat /etc/mtg.toml 2>/dev/null | grep '^secret' | awk -F'"' '{print $2}' | tr -d '\n')
+    secret=$(get_mtg_secret "$config_path")
     
     if [ -z "$secret" ]; then
         echo -e "  ${RED}[✗] Не удалось получить секрет из конфига.${NC}"
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return 1
     fi
     
     local ip
-    ip=$(curl -4 -fsS --max-time 3 ifconfig.me 2>/dev/null || curl -4 -fsS --max-time 3 icanhazip.com 2>/dev/null || echo "SERVER_IP")
+    ip=$(get_public_ip)
+    if [ -z "$ip" ]; then
+        ip="SERVER_IP"
+    fi
     
     local port
-    port=$(get_mtg_port "/etc/mtg.toml")
+    port=$(get_mtg_port "$config_path")
     if [ -z "$port" ]; then
         port="443"
     fi
@@ -670,12 +695,12 @@ show_link() {
     echo -e "  ${BOLD}Секрет:${NC} ${secret}"
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-    read -rsn1
+    { read -rsn1 </dev/tty; } 2>/dev/null || true
 }
 
 # ── Главное меню ─────────────────────────────────────────────
 while true; do
-    clear
+    clear 2>/dev/null || true
     echo ""
     echo -e "  ${BOLD}MTG меню v0.21${NC}"
     echo -e "  ${DIM}===========================${NC}"
@@ -718,7 +743,7 @@ while true; do
     fi
 
     echo -en "  ${BOLD}Выбор:${NC} "
-    read -r choice
+    { read -r choice </dev/tty; } 2>/dev/null || { echo; break; }
 
     case "$choice" in
         1)
@@ -746,7 +771,13 @@ while true; do
             purge_mtg
             ;;
         0)
-            exec /opt/mtpr-simple/proxys/proxymenu.sh
+            if [ -f "/opt/mtpr-simple/proxys/proxymenu.sh" ]; then
+                exec bash /opt/mtpr-simple/proxys/proxymenu.sh
+            else
+                echo -e "  ${RED}[✗] Файл proxymenu.sh не найден${NC}"
+                sleep 1
+            fi
+            break
             ;;
         *)
             echo "  Неверный выбор"

@@ -35,16 +35,20 @@ fetch_and_run() {
     return $rc
 }
 
-# ── Цвета ─────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-GRAY='\033[0;90m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+# ── Цвета (только когда stdout — терминал; в пайп/файл не течём ESC) ──
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    GRAY='\033[0;90m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; GRAY=''; BOLD=''; DIM=''; NC=''
+fi
 
 # ── Логирование (все сообщения в stderr, чтобы не ломать подстановки) ──
 log_info() { echo -e "  ${BLUE}[i]${NC} $1" >&2; }
@@ -61,7 +65,7 @@ fi
 # ── Функция чтения ввода с терминала ──────────────────────────
 read_input() {
     local input
-    if [ -r /dev/tty ]; then
+    if { : </dev/tty; } 2>/dev/null; then
         read -r input </dev/tty
         echo "$input"
     else
@@ -77,13 +81,24 @@ download_file() {
     
     mkdir -p "$(dirname "$dest")"
     
-    if curl -fsSL "$url" -o "$dest" 2>/dev/null; then
+    if curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$dest" 2>/dev/null; then
         chmod +x "$dest" 2>/dev/null || true
         return 0
     else
         return 1
     fi
 }
+
+# ── 0. ПРОВЕРКА ТЕРМИНАЛА ─────────────────────────────────────
+# install_auto.sh — интерактивный установщик. Без терминала меню работать
+# не может: read_input вернул бы пустую строку → выбор свалился бы на дефолт
+# → EOF-spin (бесконечный цикл). Проверяем ДО сетевых операций, чтобы
+# отсутствие tty давало честный ненулевой код возврата (интерактивная
+# установка не выполнена) и не требовало сети.
+if ! { : </dev/tty; } 2>/dev/null; then
+    log_warning "Терминал недоступен — интерактивное меню не запущено."
+    exit 1
+fi
 
 # ── 1. ПРОВЕРКА И УСТАНОВКА RULES.SH ──────────────────────────
 RULES_SCRIPT="$INSTALL_DIR/data/rules.sh"
@@ -103,19 +118,26 @@ source "$RULES_SCRIPT"
 
 # ── Функция-обёртка для install_syn_fix с корректным stdin ──
 run_syn_fix() {
+    local rc=0
     # Сохраняем текущий stdin
     exec 3<&0
     # Перенаправляем stdin на /dev/tty (только если он доступен)
-    if [ -r /dev/tty ]; then
+    if { : </dev/tty; } 2>/dev/null; then
         exec </dev/tty
     else
         log_warning "Терминал /dev/tty недоступен — интерактивный ввод может не работать"
     fi
-    # Вызываем install_syn_fix из rules.sh
-    install_syn_fix
-    # Восстанавливаем stdin
+    # Вызываем install_syn_fix из rules.sh. rc≠0 НЕ должен ронять установщик
+    # под set -e: сообщаем об ошибке и продолжаем (согласовано с вызовом
+    # install_syn_fix в auto_install_mode, где rc обрабатывается вручную).
+    install_syn_fix && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        log_error "SYN FIX завершился с кодом ${rc}"
+    fi
+    # Восстанавливаем stdin в обеих ветвях
     exec <&3 2>/dev/null || true
     exec 3<&- 2>/dev/null || true
+    return 0
 }
 
 # ── Функция проверки и загрузки файла прокси ──────────────────
@@ -159,14 +181,14 @@ get_latest_telemt_version() {
     if [ -z "$version" ]; then
         version="3.4.23"
         # Предупреждение выводим отдельной строкой в stderr
-        log_warning "Не удалось определить последнюю версию Telemt, используем $version" >&2
+        log_warning "Не удалось определить последнюю версию Telemt, используем $version"
     fi
     echo "$version"
 }
 
 # ── Режим автоустановки (БЕЗ ЗАПРОСОВ) ─────────────────────
 auto_install_mode() {
-    clear
+    if [ -t 1 ]; then clear 2>/dev/null || true; fi
     echo ""
     echo -e "  ${NC}${BOLD}⚙️ АВТОУСТАНОВКА${CYAN}${BOLD} MEKOPR ${NC}${BOLD}v0.30${NC}"
     echo -e "  ${BOLD}${DIM}═════════════════════════════════════════════════${NC}"
@@ -175,11 +197,13 @@ auto_install_mode() {
     # Параметры по умолчанию
     local domain="ozon.ru"
     local port="443"
-    local server_ip=$(get_public_ip)
+    local server_ip
+    server_ip=$(get_public_ip)
     [ -z "$server_ip" ] && server_ip="не определено"
     
     # Получаем последнюю версию Telemt (без мусора в stdout)
-    local telemt_version=$(get_latest_telemt_version)
+    local telemt_version
+    telemt_version=$(get_latest_telemt_version)
     
     # Информация о предстоящей установке (теперь версия выводится корректно)
     echo -e "  ${BOLD}Будет выполнена установка:${NC}"
@@ -195,7 +219,7 @@ auto_install_mode() {
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
         log_info "Установка отменена"
         sleep 1
-        return   # ← возврат в главное меню, а не exit
+        return  # ← возврат в главное меню, а не exit
     fi
     
     echo ""
@@ -209,18 +233,18 @@ auto_install_mode() {
     else
         log_error "Ошибка установки Telemt ${telemt_version}"
         echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
-        read -rsn1 </dev/tty 2>/dev/null || true
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return
     fi
     
     # 2. Установка SYN FIX (автоматически, вариант 1, порт)
     log_info "Установка SYN FIX (новый iptables, порт $port)..."
-    if install_syn_fix -auto_install "$port"; then
+    if install_syn_fix -auto_install -port "$port"; then
         log_success "SYN FIX установлен успешно"
     else
         log_error "Ошибка установки SYN FIX"
         echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
-        read -rsn1 </dev/tty 2>/dev/null || true
+        { read -rsn1 </dev/tty; } 2>/dev/null || true
         return
     fi
     
@@ -274,7 +298,7 @@ auto_install_mode() {
 
 # ── Режим полуавтоматической установки ─────────────────────
 semi_auto_install_mode() {
-    clear
+    if [ -t 1 ]; then clear 2>/dev/null || true; fi
     echo ""
     echo -e "  ${NC}${BOLD}⚙️ ПОЛУАВТОМАТИЧЕСКАЯ УСТАНОВКА${CYAN}${BOLD} MEKOPR ${NC}${BOLD}v0.30${NC}"
     echo -e "  ${BOLD}${DIM}═════════════════════════════════════════════════${NC}"
@@ -290,7 +314,7 @@ semi_auto_install_mode() {
     
     run_syn_fix
     
-    clear
+    if [ -t 1 ]; then clear 2>/dev/null || true; fi
     # ── Меню выбора прокси ──────────────────────────────────────
     while true; do
         echo ""
@@ -405,7 +429,7 @@ semi_auto_install_mode() {
 # ── Главное меню выбора режима ──────────────────────────────
 show_mode_menu() {
     while true; do
-        clear
+        if [ -t 1 ]; then clear 2>/dev/null || true; fi
         echo ""
         echo -e "  ${NC}${BOLD}⚙️ УСТАНОВКА${CYAN}${BOLD} MEKOPR ${NC}${BOLD}(РЕЖИМ: ${CYAN}${BOLD}Auto${NC}${BOLD}) v0.30${NC}"
         echo -e "  ${BOLD}${DIM}═════════════════════════════════════════════════${NC}"
