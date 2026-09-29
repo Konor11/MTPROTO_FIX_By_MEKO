@@ -19,6 +19,20 @@ ssh_interactive() {
     ssh -t -p "$REMOTE_PORT" -o StrictHostKeyChecking=no "$REMOTE_USER@$REMOTE_IP" "$1"
 }
 
+# ── Безопасный запуск внешнего установщика на удалённой ноде ──
+# Собирает shell-команду для удалённого хоста: скачать скрипт во
+# временный файл, проверить успех curl и непустой ответ, затем
+# запустить. Раньше `curl ... | sh` на ноде давал 0 при 404.
+# Использование: remote_installer_cmd <url> [args...]
+remote_installer_cmd() {
+    local url="$1"; shift
+    local args=""
+    if [ "$#" -gt 0 ]; then
+        args="$*"
+    fi
+    printf 'tmp=$(mktemp) || exit 1; if ! curl -fsSL %s -o "$tmp"; then rm -f "$tmp"; exit 1; fi; if [ ! -s "$tmp" ]; then rm -f "$tmp"; exit 1; fi; sh "$tmp" %s; rc=$?; rm -f "$tmp"; exit $rc' "$url" "$args"
+}
+
 # ── Цвета ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -574,10 +588,35 @@ install_telemt() {
     echo -e "  ${BLUE}[i]${NC} Установка Telemt версии ${display_version}..."
     echo ""
 
+    # ── Флаги для upstream-установщика на ноде ────────────────
+    # -l 2 обязателен: интерфейс русский; без -p/-d upstream
+    # спрашивает порт/домен и может зависнуть. Порт — из конфига
+    # ноды или /opt/mtpr-simple/port (fallback 443), домен — из
+    # tls_domain конфига ноды.
+    local _info="" _port="" _domain=""
+    _info=$(detect_telemt_advanced)
+    _port=$(echo "$_info" | cut -d: -f2)
+    _domain=$(echo "$_info" | cut -d: -f8)
+    if [ -z "$_port" ]; then
+        _port=$(ssh_exec "if [ -s /opt/mtpr-simple/port ]; then head -1 /opt/mtpr-simple/port; fi" | tr -d '[:space:]')
+    fi
+    [ -z "$_port" ] && _port="443"
+
+    local -a telemt_flags=(-l 2 -p "$_port")
+    [ -n "$_domain" ] && telemt_flags+=(-d "$_domain")
+
     if [ "$install_version" = "latest" ]; then
-        ssh_interactive "curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh"
+        if ssh_interactive "$(remote_installer_cmd "https://raw.githubusercontent.com/telemt/telemt/main/install.sh" "${telemt_flags[@]}")"; then
+            echo -e "  ${GREEN}[✓]${NC} Telemt успешно установлен (последняя версия)"
+        else
+            echo -e "  ${RED}[✗]${NC} Ошибка установки Telemt"
+        fi
     else
-        ssh_interactive "curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh -s -- $install_version"
+        if ssh_interactive "$(remote_installer_cmd "https://raw.githubusercontent.com/telemt/telemt/main/install.sh" "$install_version" "${telemt_flags[@]}")"; then
+            echo -e "  ${GREEN}[✓]${NC} Telemt версии ${install_version} успешно установлен"
+        else
+            echo -e "  ${RED}[✗]${NC} Ошибка установки Telemt версии ${install_version}"
+        fi
     fi
     
     echo ""
@@ -619,7 +658,11 @@ purge_telemt() {
     echo ""
     echo -e "  ${BLUE}[i]${NC} Удаление Telemt..."
     echo ""
-    ssh_interactive "curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh -s -- purge"
+    if ssh_interactive "$(remote_installer_cmd "https://raw.githubusercontent.com/telemt/telemt/main/install.sh" purge -l 2)"; then
+        echo -e "  ${GREEN}[✓]${NC} Telemt успешно удалён"
+    else
+        echo -e "  ${RED}[✗]${NC} Ошибка удаления Telemt"
+    fi
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
     read -rsn1
@@ -777,8 +820,7 @@ restart_telemt() {
     echo ""
     echo -e "  ${BLUE}[i]${NC} Перезапуск Telemt..."
     echo ""
-    ssh_exec "systemctl restart telemt 2>/dev/null || true"
-    if [ $? -eq 0 ]; then
+    if ssh_exec "systemctl restart telemt 2>/dev/null"; then
         echo -e "  ${GREEN}[✓]${NC} Telemt успешно перезапущен"
     else
         echo -e "  ${YELLOW}[!]${NC} Не удалось перезапустить Telemt (возможно, он не установлен как служба)"
@@ -889,8 +931,7 @@ enable_mss_options() {
         read -r restart_confirm
         
         if [[ -z "$restart_confirm" || "$restart_confirm" =~ ^[yY]$ ]]; then
-            ssh_exec "systemctl restart telemt 2>/dev/null || true"
-            if [ $? -eq 0 ]; then
+            if ssh_exec "systemctl restart telemt 2>/dev/null"; then
                 echo -e "  ${GREEN}[✓]${NC} Telemt успешно перезапущен"
             else
                 echo -e "  ${YELLOW}[!]${NC} Не удалось перезапустить telemt (возможно, он не установлен как служба)"

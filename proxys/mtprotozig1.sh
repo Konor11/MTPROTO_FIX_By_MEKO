@@ -1,6 +1,35 @@
 #!/bin/bash
 # mtprotozig1.sh
 
+# ── Безопасный запуск внешнего установщика ────────────────────
+# Скачивает скрипт во временный файл, проверяет успех curl и
+# непустой ответ, и только затем запускает. Возвращает реальный
+# код запуска: раньше `curl ... | bash` давал 0 при пустом ответе
+# (404/сеть), из-за чего сбой выглядел как успешная установка.
+# Использование: fetch_and_run <sh|bash|sudo-bash> <url> [args...]
+fetch_and_run() {
+    local mode="$1"; shift
+    local url="$1"; shift
+    local tmp rc=0
+    tmp=$(mktemp) || return 1
+    if ! curl -fsSL "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        return 1
+    fi
+    case "$mode" in
+        sh)        sh "$tmp" "$@" || rc=$? ;;
+        bash)      bash "$tmp" "$@" || rc=$? ;;
+        sudo-bash) sudo bash "$tmp" "$@" || rc=$? ;;
+        *)         rc=1 ;;
+    esac
+    rm -f "$tmp"
+    return $rc
+}
+
 # ── Цвета ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -71,7 +100,7 @@ install_zig_cli() {
     echo ""
     echo -e "  ${BLUE}[i]${NC} Установка Zig CLI для MTProtoZig..."
     echo ""
-    if curl -fsSL https://raw.githubusercontent.com/sleep3r/mtproto.zig/main/deploy/bootstrap.sh | sudo bash; then
+    if fetch_and_run sudo-bash "https://raw.githubusercontent.com/sleep3r/mtproto.zig/main/deploy/bootstrap.sh"; then
         echo ""
         echo -e "  ${GREEN}[✓]${NC} Zig CLI успешно установлен"
     else

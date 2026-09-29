@@ -68,6 +68,7 @@ get_ssh_port() {
 }
 
 save_port() {
+    mkdir -p "$(dirname "$PORT_FILE")"
     echo "$1" >"$PORT_FILE"
 }
 
@@ -117,7 +118,6 @@ get_nft_fix_status() {
 generate_apply_script() {
     local fix_type="${1:-new}"
     shift
-    local ports=("$@")
 
     if [ "$fix_type" = "old" ]; then
         cat >/opt/mtpr-simple/apply-mtpr-synfix.sh <<'APPLY_SCRIPT_EOF'
@@ -133,7 +133,7 @@ else
 fi
 
 CHAIN="MTPR_SYNFIX"
-SSH_PORT=$(sshd -T 2>/dev/null | grep '^port ' | awk '{print $2}' || echo 22)
+SSH_PORT=$(sshd -T 2>/dev/null | grep '^port ' | awk '{print $2}'); [ -n "$SSH_PORT" ] || SSH_PORT=22
 
 if ! iptables -C INPUT -p tcp --dport "$SSH_PORT" -j ACCEPT 2>/dev/null; then
     iptables -I INPUT 1 -p tcp --dport "$SSH_PORT" -j ACCEPT
@@ -193,7 +193,7 @@ else
 fi
 
 CHAIN="MTPR_SYNFIX"
-SSH_PORT=$(sshd -T 2>/dev/null | grep '^port ' | awk '{print $2}' || echo 22)
+SSH_PORT=$(sshd -T 2>/dev/null | grep '^port ' | awk '{print $2}'); [ -n "$SSH_PORT" ] || SSH_PORT=22
 
 if ! iptables -C INPUT -p tcp --dport "$SSH_PORT" -j ACCEPT 2>/dev/null; then
     iptables -I INPUT 1 -p tcp --dport "$SSH_PORT" -j ACCEPT
@@ -208,8 +208,15 @@ if ! iptables -t filter -C INPUT -j "$CHAIN" 2>/dev/null; then
     echo "Цепочка $CHAIN подключена к INPUT"
 fi
 
-# ── 1. Маркировка iOS в mangle ──────────────────────────────
-iptables -t mangle -A PREROUTING -m u32 --u32 "32 & 0x000FFFFF = 0x0002FFFF && 40 & 0xFF000000 = 0x02000000 && 44 & 0xFFFF0000 = 0x01030000 && 48 & 0xFFFFFF00 = 0x01010800 && 60 & 0xFFFFFFFF = 0x04020000" -j MARK --set-mark 0x400
+# ── 1. Маркировка iOS в mangle (идемпотентно) ───────────────
+U32_FILTER="32 & 0x000FFFFF = 0x0002FFFF && 40 & 0xFF000000 = 0x02000000 && 44 & 0xFFFF0000 = 0x01030000 && 48 & 0xFFFFFF00 = 0x01010800 && 60 & 0xFFFFFFFF = 0x04020000"
+# Сначала сносим все ранее накопившиеся дубликаты этого правила
+while iptables -t mangle -C PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400 2>/dev/null; do
+    iptables -t mangle -D PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400 2>/dev/null || break
+done
+# И добавляем ровно одно
+iptables -t mangle -C PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400 2>/dev/null \
+    || iptables -t mangle -A PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400
 
 # ── Проходим по каждому порту ──────────────────────────────
 IFS=',' read -ra PORT_ARRAY <<< "$PORTS"
@@ -247,8 +254,8 @@ generate_service_unit() {
     cat >/etc/systemd/system/mtpr-synfix.service <<'SERVICE_UNIT_EOF'
 [Unit]
 Description=MTProto SYN FIX rules for Telemt
-After=docker.service ufw.service network.target
-Wants=docker.service ufw.service
+After=network-online.target netfilter-persistent.service docker.service ufw.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot
@@ -326,8 +333,6 @@ install_syn_fix() {
     fi
 
     # ── Далее интерактивный режим или auto_install для v2/v3 ──
-
-    ssh_port=$(get_ssh_port)
 
     if [ "$auto_install" = true ]; then
         if [[ -n "$forced_ports" ]]; then
@@ -420,14 +425,22 @@ install_syn_fix() {
     if [ "$FIX_TYPE" = "zapret2" ]; then
         if [ -f "/opt/mtpr-simple/data/zapret2_fix.sh" ]; then
             source /opt/mtpr-simple/data/zapret2_fix.sh
-            show_zapret2_menu
+            if declare -f show_zapret2_menu >/dev/null 2>&1; then
+                show_zapret2_menu
+            else
+                log_error "Функция show_zapret2_menu недоступна (файл zapret2_fix.sh не загружен или повреждён)"
+            fi
         else
             log_error "zapret2_fix.sh не найден, скачиваю..."
             mkdir -p /opt/mtpr-simple/data
             curl -fsSL "https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh" -o /opt/mtpr-simple/data/zapret2_fix.sh
             chmod +x /opt/mtpr-simple/data/zapret2_fix.sh
             source /opt/mtpr-simple/data/zapret2_fix.sh
-            show_zapret2_menu
+            if declare -f show_zapret2_menu >/dev/null 2>&1; then
+                show_zapret2_menu
+            else
+                log_error "Функция show_zapret2_menu недоступна (файл zapret2_fix.sh не загружен или повреждён)"
+            fi
         fi
         return 0
     fi
@@ -519,25 +532,31 @@ CHAIN="input"
 
 nft delete table inet "$TABLE" 2>/dev/null || true
 nft add table inet "$TABLE"
-nft "add chain inet $TABLE $CHAIN { type filter hook input priority 0; policy accept; }"
+nft "add chain inet $TABLE $CHAIN { type filter hook input priority -10; policy accept; }"
 
 NFT_WRAPPER_EOF
 
+        local NFT_RULES_TEMPLATE="/opt/mtpr-simple/mtpr-synfix-nft.rules.tmpl"
         if [ "$FIX_TYPE" = "docker_smart" ]; then
-            cat >> "$NFT_SCRIPT" << 'SMART_RULES_EOF'
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn|ack) == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \"ios_accept\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn|ack) == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn|ack) == syn counter reject with icmp type host-unreachable comment \"other_reject\""
+            cat > "$NFT_RULES_TEMPLATE" << 'SMART_RULES_EOF'
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \"ios_accept\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_other6 { ip6 saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept6\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn counter reject with tcp reset comment \"other_reject\""
 SMART_RULES_EOF
         else
-            cat >> "$NFT_SCRIPT" << 'CLASSIC_RULES_EOF'
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn|ack) == syn meter mtpr_classic { ip saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \"classic_drop\""
+            cat > "$NFT_RULES_TEMPLATE" << 'CLASSIC_RULES_EOF'
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_classic { ip saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \"classic_drop\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_classic6 { ip6 saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \"classic_drop6\""
 CLASSIC_RULES_EOF
         fi
 
+        # Рендерим шаблон отдельно на КАЖДЫЙ порт (не in-place),
+        # иначе первый sed уничтожает все PORT_HERE и порты после первого теряются
         for port in "${valid_ports[@]}"; do
-            sed -i "s/PORT_HERE/${port}/g" "$NFT_SCRIPT"
+            sed "s/PORT_HERE/${port}/g" "$NFT_RULES_TEMPLATE" >> "$NFT_SCRIPT"
         done
+        rm -f "$NFT_RULES_TEMPLATE"
 
         chmod +x "$NFT_SCRIPT"
 
@@ -555,8 +574,8 @@ CLASSIC_RULES_EOF
         cat > /etc/systemd/system/mtpr-nft-synfix.service << 'SERVICE_NFT_EOF'
 [Unit]
 Description=MTProto SYN FIX (nftables) for Telemt/Docker
-After=docker.service network.target
-Wants=docker.service
+After=network-online.target netfilter-persistent.service docker.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot
@@ -568,9 +587,12 @@ ExecStop=/bin/sh -c '/usr/sbin/nft delete table inet mtpr_synfix 2>/dev/null || 
 WantedBy=multi-user.target
 SERVICE_NFT_EOF
 
-        systemctl daemon-reload
-        systemctl enable mtpr-nft-synfix.service 2>/dev/null
-        systemctl restart mtpr-nft-synfix.service 2>/dev/null
+        systemctl daemon-reload || log_warning "systemctl daemon-reload завершился с ошибкой"
+        systemctl enable mtpr-nft-synfix.service 2>/dev/null \
+            || log_warning "Не удалось выполнить systemctl enable mtpr-nft-synfix.service"
+        systemctl restart mtpr-nft-synfix.service 2>/dev/null \
+            || log_error "Не удалось выполнить systemctl restart mtpr-nft-synfix.service (правила в ядре применены, но автозапуск не активен)"
+        log_info "Автозапуск mtpr-nft-synfix.service: $(systemctl is-enabled mtpr-nft-synfix.service 2>/dev/null || echo неизвестно)"
 
         log_success "SYN FIX (nftables) успешно установлен на порты: $ports_str"
         if [ "$auto_install" = false ] && [ -r /dev/tty ]; then
@@ -610,7 +632,7 @@ SERVICE_NFT_EOF
 
     generate_apply_script "$FIX_TYPE" "${valid_ports[@]}"
     generate_service_unit
-    systemctl daemon-reload
+    systemctl daemon-reload || log_warning "systemctl daemon-reload завершился с ошибкой"
 
     local apply_output
     local apply_exit_code
@@ -683,8 +705,11 @@ SERVICE_NFT_EOF
                     echo ""
                     
                     PORT="$ports_str" /opt/mtpr-simple/apply-mtpr-synfix.sh
-                    systemctl enable mtpr-synfix.service
-                    systemctl restart mtpr-synfix.service
+                    systemctl enable mtpr-synfix.service \
+                        || log_warning "Не удалось выполнить systemctl enable mtpr-synfix.service"
+                    systemctl restart mtpr-synfix.service \
+                        || log_error "Не удалось выполнить systemctl restart mtpr-synfix.service (правила в ядре применены, но автозапуск не активен)"
+                    log_info "Автозапуск mtpr-synfix.service: $(systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно)"
                     
                     log_success "SYN FIX успешно установлен на порты: $ports_str"
                     if [ -r /dev/tty ]; then
@@ -722,8 +747,11 @@ SERVICE_NFT_EOF
         fi
         return 1
     else
-        systemctl enable mtpr-synfix.service
-        systemctl restart mtpr-synfix.service
+        systemctl enable mtpr-synfix.service \
+            || log_warning "Не удалось выполнить systemctl enable mtpr-synfix.service"
+        systemctl restart mtpr-synfix.service \
+            || log_error "Не удалось выполнить systemctl restart mtpr-synfix.service (правила в ядре применены, но автозапуск не активен)"
+        log_info "Автозапуск mtpr-synfix.service: $(systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно)"
         log_success "SYN FIX успешно установлен на порты: $ports_str"
         if [ "$auto_install" = false ] && [ -r /dev/tty ]; then
             echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
@@ -741,6 +769,8 @@ install_nft_auto() {
         p=$(echo "$p" | xargs)
         if [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; then
             valid_ports+=("$p")
+        else
+            log_warning "Некорректный порт '$p' пропущен"
         fi
     done
     if [ ${#valid_ports[@]} -eq 0 ]; then
@@ -776,19 +806,24 @@ CHAIN="input"
 
 nft delete table inet "$TABLE" 2>/dev/null || true
 nft add table inet "$TABLE"
-nft "add chain inet $TABLE $CHAIN { type filter hook input priority 0; policy accept; }"
+nft "add chain inet $TABLE $CHAIN { type filter hook input priority -10; policy accept; }"
 
 NFT_WRAPPER_EOF
 
-    cat >> "$NFT_SCRIPT" << 'SMART_RULES_EOF'
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn|ack) == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \"ios_accept\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn|ack) == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn|ack) == syn counter reject with icmp type host-unreachable comment \"other_reject\""
+    local NFT_RULES_TEMPLATE="/opt/mtpr-simple/mtpr-synfix-nft.rules.tmpl"
+    cat > "$NFT_RULES_TEMPLATE" << 'SMART_RULES_EOF'
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \"ios_accept\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_other6 { ip6 saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept6\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn counter reject with tcp reset comment \"other_reject\""
 SMART_RULES_EOF
 
+    # Рендерим шаблон отдельно на КАЖДЫЙ порт (не in-place),
+    # иначе первый sed уничтожает все PORT_HERE и порты после первого теряются
     for port in "${valid_ports[@]}"; do
-        sed -i "s/PORT_HERE/${port}/g" "$NFT_SCRIPT"
+        sed "s/PORT_HERE/${port}/g" "$NFT_RULES_TEMPLATE" >> "$NFT_SCRIPT"
     done
+    rm -f "$NFT_RULES_TEMPLATE"
 
     chmod +x "$NFT_SCRIPT"
 
@@ -802,8 +837,8 @@ SMART_RULES_EOF
     cat > /etc/systemd/system/mtpr-nft-synfix.service << 'SERVICE_NFT_EOF'
 [Unit]
 Description=MTProto SYN FIX (nftables) for Telemt/Docker
-After=docker.service network.target
-Wants=docker.service
+After=network-online.target netfilter-persistent.service docker.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot
@@ -815,9 +850,12 @@ ExecStop=/bin/sh -c '/usr/sbin/nft delete table inet mtpr_synfix 2>/dev/null || 
 WantedBy=multi-user.target
 SERVICE_NFT_EOF
 
-    systemctl daemon-reload
-    systemctl enable mtpr-nft-synfix.service 2>/dev/null
-    systemctl restart mtpr-nft-synfix.service 2>/dev/null
+    systemctl daemon-reload || log_warning "systemctl daemon-reload завершился с ошибкой"
+    systemctl enable mtpr-nft-synfix.service 2>/dev/null \
+        || log_warning "Не удалось выполнить systemctl enable mtpr-nft-synfix.service"
+    systemctl restart mtpr-nft-synfix.service 2>/dev/null \
+        || log_error "Не удалось выполнить systemctl restart mtpr-nft-synfix.service (правила в ядре применены, но автозапуск не активен)"
+    log_info "Автозапуск mtpr-nft-synfix.service: $(systemctl is-enabled mtpr-nft-synfix.service 2>/dev/null || echo неизвестно)"
 
     log_success "SYN FIX (nftables) успешно установлен на порты: $ports_str_clean"
     return 0

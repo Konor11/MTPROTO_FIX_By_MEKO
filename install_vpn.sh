@@ -76,7 +76,7 @@ open_3xui_menu() {
         else
             log_error "Не удалось загрузить меню 3x-ui"
             echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-            read -rsn1 </dev/tty 2>/dev/null
+            read -rsn1 </dev/tty 2>/dev/null || true
             return
         fi
     fi
@@ -94,7 +94,16 @@ install_remnawave() {
     echo ""
 
     # Заменяем текущий процесс на выполнение команды с терминальным вводом
-    exec sudo bash -c "$(curl -sL https://raw.githubusercontent.com/xxphantom/remnawave-installer/main/install.sh)" @ --lang=ru </dev/tty
+    local installer_script
+    if ! installer_script=$(curl -fsSL https://raw.githubusercontent.com/xxphantom/remnawave-installer/main/install.sh); then
+        log_error "Не удалось загрузить установщик Remnawave"
+        return 1
+    fi
+    if [ -z "$installer_script" ]; then
+        log_error "Установщик Remnawave вернул пустой скрипт"
+        return 1
+    fi
+    exec sudo bash -c "$installer_script" @ --lang=ru </dev/tty
 }
 
 # ── Очистка экрана и шапка ────────────────────────────────────

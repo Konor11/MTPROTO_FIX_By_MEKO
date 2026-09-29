@@ -77,6 +77,9 @@ def _find_openssl():
             continue
         seen.add(path)
         if not (os.path.isfile(path) and os.access(path, os.X_OK)):
+            if env_bin and path == env_bin:
+                print(f"{YELLOW}⚠️  {_OPENSSL_ENV}={path} не существует или не исполняется — игнорирую.{NC}",
+                      file=sys.stderr)
             continue
         if fallback is None:
             fallback = path
@@ -86,6 +89,9 @@ def _find_openssl():
 
 
 OPENSSL_BIN, OPENSSL_HAS_PQ = _find_openssl()
+# Единственный источник истины: оба имени выводятся из одного вызова,
+# поэтому OPENSSL_HAS_PQ и OPENSSL_SUPPORTS_PQ не могут разойтись.
+OPENSSL_SUPPORTS_PQ = OPENSSL_HAS_PQ
 
 # MEKO-фикс ограничивает входящие SYN: hashlimit 54/minute (~1.1 сек на IP),
 # ответ — REJECT с tcp-reset, у клиента это ECONNREFUSED. Без паузы чекер
@@ -106,65 +112,7 @@ def _throttle():
             time.sleep(RATE_DELAY - gap)
         _last_call = time.monotonic()
 
-# ── Функция поиска подходящего OpenSSL ──────────────────────
-def _find_openssl():
-    """
-    Ищет бинарник OpenSSL, который поддерживает группу X25519MLKEM768.
-    Возвращает путь к подходящему бинарнику, либо fallback (первый найденный),
-    либо '/usr/bin/openssl' как последняя надежда.
-    """
-    # Приоритетные пути (обычно свежие сборки ставятся сюда)
-    candidates = [
-        "/opt/openssl-3.5/bin/openssl",
-        "/opt/openssl-3.6/bin/openssl",
-        "/opt/openssl/bin/openssl",
-        "/usr/local/ssl/bin/openssl",
-        "/usr/local/bin/openssl",
-        shutil.which("openssl"),
-        "/usr/bin/openssl",
-    ]
-
-    seen = set()
-    fallback = None
-    for path in candidates:
-        if not path or path in seen:
-            continue
-        seen.add(path)
-        if not os.path.isfile(path):
-            continue
-        if fallback is None:
-            fallback = path
-
-        # Проверяем, знает ли этот бинарник группу X25519MLKEM768
-        try:
-            proc = subprocess.run(
-                [path, "list", "-tls-groups"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if "X25519MLKEM768" in proc.stdout:
-                return path  # нашли подходящий
-        except (subprocess.SubprocessError, OSError):
-            continue
-
-    # Если не нашли подходящий, возвращаем fallback или /usr/bin/openssl
-    return fallback or "/usr/bin/openssl"
-
-# ── Определяем путь к OpenSSL и флаг поддержки PQ ───────────
-OPENSSL_BIN = _find_openssl()
-OPENSSL_SUPPORTS_PQ = False
-
-# Проверяем, поддерживает ли выбранный бинарник группу X25519MLKEM768
-try:
-    proc = subprocess.run(
-        [OPENSSL_BIN, "list", "-tls-groups"],
-        capture_output=True, text=True, timeout=5,
-    )
-    if "X25519MLKEM768" in proc.stdout:
-        OPENSSL_SUPPORTS_PQ = True
-except (subprocess.SubprocessError, OSError):
-    pass
-
-# Если не поддерживает – выведем предупреждение при первом вызове check_one
+# Если OpenSSL не поддерживает PQ — выведем предупреждение при первом вызове check_one
 _WARNED_PQ = False
 
 def print_warning_pq():
@@ -440,6 +388,29 @@ def check_ip(ip, port, sni):
         "std_output": std
     }
 
+def _parse_host_port(target):
+    """Разбирает host[:port] с поддержкой IPv6.
+
+    Понимает: example.com:443, 1.2.3.4:443, [::1]:443, [::1], ::1.
+    Если порт не указан или не число — возвращает 443.
+    """
+    host = target
+    port = "443"
+    if target.startswith("["):
+        end = target.find("]")
+        if end != -1:
+            host = target[1:end]
+            rest = target[end + 1:]
+            if rest.startswith(":") and rest[1:].isdigit():
+                port = rest[1:]
+    elif target.count(":") == 1:
+        h, _, p = target.partition(":")
+        host = h
+        if p.isdigit():
+            port = p
+    # 0 двоеточий — хост без порта; >=2 — чистый IPv6 без порта
+    return host, port
+
 def check_one(domain):
     # Если OpenSSL не поддерживает PQ, выводим предупреждение
     if not OPENSSL_SUPPORTS_PQ:
@@ -464,13 +435,7 @@ def check_one(domain):
     if not target:
         return "❌ Пустой домен"
 
-    if ":" in target and not target.startswith("["):
-        parts = target.rsplit(":", 1)
-        host = parts[0]
-        port = parts[1] if parts[1].isdigit() else "443"
-    else:
-        host = target
-        port = "443"
+    host, port = _parse_host_port(target)
 
     ips = resolve_all_ips(host)
     lines = [f"{BOLD}🔎 {host}:{port}{NC}"]
@@ -669,13 +634,6 @@ def check_one(domain):
                 "-brief",
             ])
             
-            # PQ блок
-            lines.append(f"{CYAN}━━━ PQ-подключение ━━━{NC}")
-            if "CONNECTION ESTABLISHED" in detail_pq:
-                lines.append(f"{GREEN}✅ Статус: поддерживается{NC}")
-            else:
-                render_failure(lines, detail_pq)
-            
             # Обычный TLS блок
             lines.append("")
             lines.append(f"{CYAN}━━━ Обычное TLS-подключение ━━━{NC}")
@@ -856,12 +814,19 @@ def main():
         print(f"  {DIM}═════════════════════════════════════════════════{NC}")
         print("")
         if not OPENSSL_HAS_PQ:
-            _v = subprocess.run([OPENSSL_BIN, "version"], capture_output=True,
-                                text=True).stdout.strip()
-            print(f"  {YELLOW}{BOLD}⚠️  {OPENSSL_BIN} ({_v}){NC}")
-            print(f"  {YELLOW}    не поддерживает {REQUIRED_GROUP}. Результат PQ-проверки{NC}")
-            print(f"  {YELLOW}    будет НЕДОСТОВЕРЕН — нужен OpenSSL >= 3.5.{NC}")
-            print(f"  {YELLOW}    Свой путь: {_OPENSSL_ENV}=/path/to/openssl{NC}")
+            if os.path.isfile(OPENSSL_BIN) and os.access(OPENSSL_BIN, os.X_OK):
+                try:
+                    _v = subprocess.run([OPENSSL_BIN, "version"], capture_output=True,
+                                        text=True, timeout=5).stdout.strip()
+                except (subprocess.SubprocessError, OSError):
+                    _v = "не запустился"
+                print(f"  {YELLOW}{BOLD}⚠️  {OPENSSL_BIN} ({_v}){NC}")
+                print(f"  {YELLOW}    не поддерживает {REQUIRED_GROUP}. Результат PQ-проверки{NC}")
+                print(f"  {YELLOW}    будет НЕДОСТОВЕРЕН — нужен OpenSSL >= 3.5.{NC}")
+                print(f"  {YELLOW}    Свой путь: {_OPENSSL_ENV}=/path/to/openssl{NC}")
+            else:
+                print(f"  {RED}{BOLD}❌ OpenSSL не найден: {OPENSSL_BIN}{NC}")
+                print(f"  {RED}    Проверка TLS/PQ невозможна. Укажите путь: {_OPENSSL_ENV}=/path/to/openssl{NC}")
             print("")
         else:
             print(f"  {DIM}OpenSSL: {OPENSSL_BIN}{NC}")

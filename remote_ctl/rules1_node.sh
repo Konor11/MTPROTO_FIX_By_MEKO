@@ -160,7 +160,7 @@ else
 fi
 
 CHAIN="MTPR_SYNFIX"
-SSH_PORT=$(sshd -T 2>/dev/null | grep '^port ' | awk '{print $2}' || echo 22)
+SSH_PORT=$(sshd -T 2>/dev/null | grep '^port ' | awk '{print $2}'); [ -n "$SSH_PORT" ] || SSH_PORT=22
 
 if ! iptables -C INPUT -p tcp --dport "$SSH_PORT" -j ACCEPT 2>/dev/null; then
     iptables -I INPUT 1 -p tcp --dport "$SSH_PORT" -j ACCEPT
@@ -214,7 +214,7 @@ else
 fi
 
 CHAIN="MTPR_SYNFIX"
-SSH_PORT=$(sshd -T 2>/dev/null | grep '^port ' | awk '{print $2}' || echo 22)
+SSH_PORT=$(sshd -T 2>/dev/null | grep '^port ' | awk '{print $2}'); [ -n "$SSH_PORT" ] || SSH_PORT=22
 
 if ! iptables -C INPUT -p tcp --dport "$SSH_PORT" -j ACCEPT 2>/dev/null; then
     iptables -I INPUT 1 -p tcp --dport "$SSH_PORT" -j ACCEPT
@@ -229,7 +229,12 @@ if ! iptables -t filter -C INPUT -j "$CHAIN" 2>/dev/null; then
     echo "Цепочка $CHAIN подключена к INPUT"
 fi
 
-iptables -t mangle -A PREROUTING -m u32 --u32 "32 & 0x000FFFFF = 0x0002FFFF && 40 & 0xFF000000 = 0x02000000 && 44 & 0xFFFF0000 = 0x01030000 && 48 & 0xFFFFFF00 = 0x01010800 && 60 & 0xFFFFFFFF = 0x04020000" -j MARK --set-mark 0x400
+U32_FILTER="32 & 0x000FFFFF = 0x0002FFFF && 40 & 0xFF000000 = 0x02000000 && 44 & 0xFFFF0000 = 0x01030000 && 48 & 0xFFFFFF00 = 0x01010800 && 60 & 0xFFFFFFFF = 0x04020000"
+while iptables -t mangle -C PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400 2>/dev/null; do
+    iptables -t mangle -D PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400 2>/dev/null || break
+done
+iptables -t mangle -C PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400 2>/dev/null \
+    || iptables -t mangle -A PREROUTING -m u32 --u32 "$U32_FILTER" -j MARK --set-mark 0x400
 
 IFS=',' read -ra PORT_ARRAY <<< "$PORTS"
 for PORT in "${PORT_ARRAY[@]}"; do
@@ -267,8 +272,8 @@ generate_service_unit() {
     local service_content=$(cat <<'SERVICE_UNIT_EOF'
 [Unit]
 Description=MTProto SYN FIX rules for Telemt
-After=docker.service ufw.service network.target
-Wants=docker.service ufw.service
+After=network-online.target netfilter-persistent.service docker.service ufw.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot
@@ -461,20 +466,22 @@ CHAIN="input"
 
 nft delete table inet "$TABLE" 2>/dev/null || true
 nft add table inet "$TABLE"
-nft "add chain inet $TABLE $CHAIN { type filter hook input priority 0; policy accept; }"
+nft "add chain inet $TABLE $CHAIN { type filter hook input priority -10; policy accept; }"
 NFT_WRAPPER_EOF
 )
 
         if [ "$FIX_TYPE" = "docker_smart" ]; then
             nft_script_content+=$'\n'"# 1. iOS по TCP fingerprint → ACCEPT без лимита"
             for port in "${valid_ports[@]}"; do
-                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & (syn|ack) == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \\\"ios_accept\\\"\""
-                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & (syn|ack) == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \\\"other_accept\\\"\""
-                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & (syn|ack) == syn counter reject with icmp type host-unreachable comment \\\"other_reject\\\"\""
+                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & syn == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \\\"ios_accept\\\"\""
+                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & syn == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \\\"other_accept\\\"\""
+                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & syn == syn meter mtpr_other6 { ip6 saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \\\"other_accept6\\\"\""
+                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & syn == syn counter reject with tcp reset comment \\\"other_reject\\\"\""
             done
         else
             for port in "${valid_ports[@]}"; do
-                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & (syn|ack) == syn meter mtpr_classic { ip saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \\\"classic_drop\\\"\""
+                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & syn == syn meter mtpr_classic { ip saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \\\"classic_drop\\\"\""
+                nft_script_content+=$'\n'"nft \"add rule inet mtpr_synfix input tcp dport $port tcp flags & syn == syn meter mtpr_classic6 { ip6 saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \\\"classic_drop6\\\"\""
             done
         fi
 
@@ -499,8 +506,8 @@ chmod +x $NFT_SCRIPT"
         local service_nft_content=$(cat <<'SERVICE_NFT_EOF'
 [Unit]
 Description=MTProto SYN FIX (nftables) for Telemt/Docker
-After=docker.service network.target
-Wants=docker.service
+After=network-online.target netfilter-persistent.service docker.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot
@@ -520,6 +527,7 @@ systemctl enable mtpr-nft-synfix.service 2>/dev/null || true
 systemctl restart mtpr-nft-synfix.service 2>/dev/null || true"
 
         echo ""
+        log_info "Автозапуск mtpr-nft-synfix.service: $(ssh_exec "systemctl is-enabled mtpr-nft-synfix.service 2>/dev/null || echo неизвестно")"
         log_success "SYN FIX (nftables) успешно установлен на порты: $ports_str"
         read -rsn1 -p "  Нажмите любую клавишу..."
         return 0
@@ -614,6 +622,7 @@ systemctl restart mtpr-nft-synfix.service 2>/dev/null || true"
                 ssh_exec "systemctl enable mtpr-synfix.service && systemctl restart mtpr-synfix.service"
 
                 echo ""
+                log_info "Автозапуск mtpr-synfix.service: $(ssh_exec "systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно")"
                 log_success "SYN FIX успешно установлен на порты: $ports_str"
                 read -rsn1 -p "  Нажмите любую клавишу..."
             else
@@ -636,6 +645,7 @@ systemctl restart mtpr-nft-synfix.service 2>/dev/null || true"
     else
         ssh_exec "systemctl enable mtpr-synfix.service && systemctl restart mtpr-synfix.service"
         echo ""
+        log_info "Автозапуск mtpr-synfix.service: $(ssh_exec "systemctl is-enabled mtpr-synfix.service 2>/dev/null || echo неизвестно")"
         log_success "SYN FIX успешно установлен на порты: $ports_str"
         read -rsn1 -p "  Нажмите любую клавишу..."
     fi

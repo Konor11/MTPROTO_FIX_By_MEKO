@@ -6,6 +6,35 @@ set -e
 BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main"
 INSTALL_DIR="/opt/mtpr-simple"
 
+# ── Безопасный запуск внешнего установщика ────────────────────
+# Скачивает скрипт во временный файл, проверяет успех curl и
+# непустой ответ, и только затем запускает. Возвращает реальный
+# код запуска: раньше `curl ... | sh` давал 0 при пустом ответе
+# (404/сеть), из-за чего сбой выглядел как успешная установка.
+# Использование: fetch_and_run <sh|bash|sudo-bash> <url> [args...]
+fetch_and_run() {
+    local mode="$1"; shift
+    local url="$1"; shift
+    local tmp rc=0
+    tmp=$(mktemp) || return 1
+    if ! curl -fsSL "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        return 1
+    fi
+    case "$mode" in
+        sh)        sh "$tmp" "$@" || rc=$? ;;
+        bash)      bash "$tmp" "$@" || rc=$? ;;
+        sudo-bash) sudo bash "$tmp" "$@" || rc=$? ;;
+        *)         rc=1 ;;
+    esac
+    rm -f "$tmp"
+    return $rc
+}
+
 # ── Цвета ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -925,22 +954,37 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
     # Домен (если ставится прокси)
     if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" ]]; then
         if [ -z "$DOMAIN" ]; then
-            echo -en "  ${BOLD}Введите SNI домен${NC} ${DIM}(по умолчанию: ozon.ru)${NC}: " >&2
-            if [ -r /dev/tty ]; then
-                read -r DOMAIN </dev/tty
-            else
+            while true; do
+                echo -en "  ${BOLD}Введите SNI домен${NC} ${DIM}(по умолчанию: ozon.ru)${NC}: " >&2
+                if [ -r /dev/tty ]; then
+                    read -r DOMAIN </dev/tty
+                else
+                    DOMAIN=""
+                fi
+                DOMAIN=$(trim "$DOMAIN")
+                [ -z "$DOMAIN" ] && DOMAIN="ozon.ru"
+                if [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+                    break
+                fi
+                echo -e "  ${RED}[✗]${NC} Неверный домен: ${DOMAIN}. Допустимы буквы, цифры, точка и дефис." >&2
                 DOMAIN=""
-            fi
-            [ -z "$DOMAIN" ] && DOMAIN="ozon.ru"
+            done
         fi
         if [ -z "$PROXY_PORT" ]; then
-            echo -en "  ${BOLD}Введите порт для прокси${NC} ${DIM}(по умолчанию: 443)${NC}: " >&2
-            if [ -r /dev/tty ]; then
-                read -r PROXY_PORT </dev/tty
-            else
+            while true; do
+                echo -en "  ${BOLD}Введите порт для прокси${NC} ${DIM}(по умолчанию: 443)${NC}: " >&2
+                if [ -r /dev/tty ]; then
+                    read -r PROXY_PORT </dev/tty
+                else
+                    PROXY_PORT=""
+                fi
+                [ -z "$PROXY_PORT" ] && PROXY_PORT="443"
+                if [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ]; then
+                    break
+                fi
+                echo -e "  ${RED}[✗]${NC} Неверный порт: ${PROXY_PORT} (нужно 1-65535)." >&2
                 PROXY_PORT=""
-            fi
-            [ -z "$PROXY_PORT" ] && PROXY_PORT="443"
+            done
         fi
         # Версия Telemt
         if [[ -n "$FLAG_TELEMT" && -z "$TELEMT_VERSION" ]]; then
@@ -1009,13 +1053,20 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
                 FIX_PORT="$PROXY_PORT"
                 log_info "Порт фикса взят из порта прокси: $FIX_PORT"
             else
-                echo -en "  ${BOLD}Введите порт для фикса${NC} ${DIM}(по умолчанию: 443)${NC}: " >&2
-                if [ -r /dev/tty ]; then
-                    read -r FIX_PORT </dev/tty
-                else
+                while true; do
+                    echo -en "  ${BOLD}Введите порт для фикса${NC} ${DIM}(по умолчанию: 443)${NC}: " >&2
+                    if [ -r /dev/tty ]; then
+                        read -r FIX_PORT </dev/tty
+                    else
+                        FIX_PORT=""
+                    fi
+                    [ -z "$FIX_PORT" ] && FIX_PORT="443"
+                    if [[ "$FIX_PORT" =~ ^[0-9]+$ ]] && [ "$FIX_PORT" -ge 1 ] && [ "$FIX_PORT" -le 65535 ]; then
+                        break
+                    fi
+                    echo -e "  ${RED}[✗]${NC} Неверный порт: ${FIX_PORT} (нужно 1-65535)." >&2
                     FIX_PORT=""
-                fi
-                [ -z "$FIX_PORT" ] && FIX_PORT="443"
+                done
             fi
         fi
         # Тип фикса (если не указан, спрашиваем)
@@ -1091,8 +1142,12 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
     if [[ -n "$FLAG_TELEMT" ]]; then
         echo "" >&2
         log_info "Установка Telemt версии $TELEMT_VERSION на домен $DOMAIN, порт $PROXY_PORT..."
-        curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh -s -- "$TELEMT_VERSION" -l 2 -d "$DOMAIN" -p "$PROXY_PORT"
-        log_success "Telemt установлен"
+        if fetch_and_run sh "https://raw.githubusercontent.com/telemt/telemt/main/install.sh" "$TELEMT_VERSION" -l 2 -d "$DOMAIN" -p "$PROXY_PORT"; then
+            log_success "Telemt установлен"
+        else
+            log_error "Не удалось установить Telemt"
+            exit 1
+        fi
         
         # Если передан флаг -web, настраиваем WEB-конфиг
         if [[ -n "$FLAG_WEB" ]]; then
@@ -1197,7 +1252,10 @@ if [[ -n "$FLAG_TELEMT" || -n "$FLAG_ZIG" || -n "$FLAG_MTG" || -n "$FLAG_FIX" ||
     if [[ -n "$FLAG_ZIG" ]]; then
         echo "" >&2
         log_info "Установка Mtproto.zig на домен $DOMAIN, порт $PROXY_PORT..."
-        curl -fsSL https://raw.githubusercontent.com/sleep3r/mtproto.zig/main/deploy/bootstrap.sh | sudo bash
+        if ! fetch_and_run sudo-bash "https://raw.githubusercontent.com/sleep3r/mtproto.zig/main/deploy/bootstrap.sh"; then
+            log_error "Не удалось установить Mtproto.zig"
+            exit 1
+        fi
         sudo mtbuddy install --port "$PROXY_PORT" --domain "$DOMAIN" --middle-proxy --no-tcpmss --no-masking --no-nfqws --no-dpi --yes
         log_success "Mtproto.zig установлен"
     fi

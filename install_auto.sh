@@ -6,6 +6,35 @@ set -e
 BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main"
 INSTALL_DIR="/opt/mtpr-simple"
 
+# ── Безопасный запуск внешнего установщика ────────────────────
+# Скачивает скрипт во временный файл, проверяет успех curl и
+# непустой ответ, и только затем запускает. Возвращает реальный
+# код запуска: раньше `curl ... | sh` давал 0 при пустом ответе
+# (404/сеть), из-за чего сбой выглядел как успешная установка.
+# Использование: fetch_and_run <sh|bash|sudo-bash> <url> [args...]
+fetch_and_run() {
+    local mode="$1"; shift
+    local url="$1"; shift
+    local tmp rc=0
+    tmp=$(mktemp) || return 1
+    if ! curl -fsSL "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        return 1
+    fi
+    case "$mode" in
+        sh)        sh "$tmp" "$@" || rc=$? ;;
+        bash)      bash "$tmp" "$@" || rc=$? ;;
+        sudo-bash) sudo bash "$tmp" "$@" || rc=$? ;;
+        *)         rc=1 ;;
+    esac
+    rm -f "$tmp"
+    return $rc
+}
+
 # ── Цвета ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -76,8 +105,12 @@ source "$RULES_SCRIPT"
 run_syn_fix() {
     # Сохраняем текущий stdin
     exec 3<&0
-    # Перенаправляем stdin на /dev/tty
-    exec </dev/tty 2>/dev/null || true
+    # Перенаправляем stdin на /dev/tty (только если он доступен)
+    if [ -r /dev/tty ]; then
+        exec </dev/tty
+    else
+        log_warning "Терминал /dev/tty недоступен — интерактивный ввод может не работать"
+    fi
     # Вызываем install_syn_fix из rules.sh
     install_syn_fix
     # Восстанавливаем stdin
@@ -171,12 +204,12 @@ auto_install_mode() {
     
     # 1. Установка Telemt (конкретная версия, русский язык)
     log_info "Установка Telemt версии ${telemt_version} на домен $domain, порт $port..."
-    if curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh -s -- "$telemt_version" -l 2 -d "$domain" -p "$port"; then
+    if fetch_and_run sh "https://raw.githubusercontent.com/telemt/telemt/main/install.sh" "$telemt_version" -l 2 -d "$domain" -p "$port"; then
         log_success "Telemt ${telemt_version} установлен успешно"
     else
         log_error "Ошибка установки Telemt ${telemt_version}"
         echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
-        read -rsn1
+        read -rsn1 </dev/tty 2>/dev/null || true
         return
     fi
     
@@ -187,7 +220,7 @@ auto_install_mode() {
     else
         log_error "Ошибка установки SYN FIX"
         echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
-        read -rsn1
+        read -rsn1 </dev/tty 2>/dev/null || true
         return
     fi
     
@@ -224,8 +257,11 @@ auto_install_mode() {
             1)
                 echo ""
                 log_info "Установка MEKO Launcher..."
-                curl -fsSL "$BASE_URL/install_main.sh" | sudo bash
-                break
+                if fetch_and_run sudo-bash "$BASE_URL/install_main.sh"; then
+                    break
+                else
+                    log_error "Не удалось установить MEKO Launcher"
+                fi
                 ;;
             *)
                 echo ""
@@ -351,8 +387,11 @@ semi_auto_install_mode() {
             1)
                 echo ""
                 log_info "Установка MEKO Launcher..."
-                curl -fsSL "$BASE_URL/install_main.sh" | sudo bash
-                break
+                if fetch_and_run sudo-bash "$BASE_URL/install_main.sh"; then
+                    break
+                else
+                    log_error "Не удалось установить MEKO Launcher"
+                fi
                 ;;
             *)
                 echo ""

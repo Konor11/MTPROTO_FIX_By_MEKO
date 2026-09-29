@@ -47,7 +47,7 @@ ensure_rules_loaded() {
         RULES_LOADED=1
         if [ -f /opt/mtpr-simple/data/zapret2_fix.sh ]; then
             source /opt/mtpr-simple/data/zapret2_fix.sh
-            zapret2_load_settings 2>/dev/null || true
+            if declare -f load_settings >/dev/null 2>&1; then load_settings 2>/dev/null || true; fi
         fi
         return 0
     fi
@@ -61,7 +61,7 @@ ensure_rules_loaded() {
         if curl -fsSL --max-time 5 "https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh" -o /opt/mtpr-simple/data/zapret2_fix.sh; then
             chmod +x /opt/mtpr-simple/data/zapret2_fix.sh
             source /opt/mtpr-simple/data/zapret2_fix.sh
-            zapret2_load_settings 2>/dev/null || true
+            if declare -f load_settings >/dev/null 2>&1; then load_settings 2>/dev/null || true; fi
         fi
         log_success "rules.sh успешно загружен"
         return 0
@@ -340,7 +340,7 @@ else
     
     echo ""
     echo -en "  ${BOLD}Ввод:${NC} "
-    read -r CONFIG_TELEMT_INPUT
+    read -r CONFIG_TELEMT_INPUT </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
 
     if [[ "$CONFIG_TELEMT_INPUT" =~ ^[Nn]$ ]]; then
         mkdir -p /opt/mtpr-simple
@@ -370,7 +370,7 @@ else
                 log_warning "Файл $CONFIG_TELEMT_INPUT не найден."
                 echo -en "  ${BOLD}Сохранить этот путь всё равно? [y/N]:${NC} "
                 confirm_path=""
-                read -r confirm_path
+                read -r confirm_path </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
                 if [[ ! "$confirm_path" =~ ^[yY]$ ]]; then
                     log_error "Путь к конфигу не подтверждён, выход."
                     exit 1
@@ -465,7 +465,7 @@ remove_mekopr() {
     log_warning "Это действие нельзя отменить!"
     echo -en "  ${BOLD}Продолжить удаление? [y/N]:${NC} "
     local confirm
-    read -r confirm
+    read -r confirm </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
 
     if [[ ! "$confirm" =~ ^[yY]$ ]]; then
         log_info "Удаление отменено"
@@ -486,7 +486,7 @@ remove_mekopr() {
     log_success "MEKOpr полностью удалён с сервера!"
     echo ""
     log_info "Для завершения работы скрипта нажмите Enter..."
-    read -r
+    read -r </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
 
     log_info "Удаление скрипта..."
     rm -f "$0"
@@ -824,7 +824,7 @@ open_proxy_menu() {
     else
         log_error "Файл $PROXY_MENU_SCRIPT не найден"
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-        read -rsn1
+        read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
     fi
 }
 
@@ -836,7 +836,7 @@ check_censor() {
     wget -qO- https://raw.githubusercontent.com/Nokola-Tesla/censorcheck/main/censorcheck.sh | bash
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1
+    read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
 }
 
 # ── Главное меню ─────────────────────────────────────────────
@@ -851,7 +851,7 @@ main_menu() {
         else
             log_error "Невозможно выполнить автоустановку: rules.sh не загружен"
             echo -e "  ${GRAY}Нажмите любую клавишу...${NC}"
-            read -rsn1
+            read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
         fi
         return 0
     fi
@@ -896,7 +896,7 @@ main_menu() {
         echo ""
         echo -en "  ${BOLD}Выбор:${NC} "
         local choice
-        read -r choice
+        read -r choice </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
 
         case "$choice" in
         1)
@@ -904,7 +904,7 @@ main_menu() {
             if ! ensure_rules_loaded; then
                 log_error "Невозможно выполнить действие: rules.sh не загружен"
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
                 continue
             fi
 
@@ -915,7 +915,7 @@ main_menu() {
                 log_info "Обнаружен iptables SYN FIX ($SYNFIX_CHAIN). Удалить?"
                 echo -en "  ${BOLD}Удалить? [Y/n]:${NC} "
                 local confirm
-                read -r confirm
+                read -r confirm </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
                 if [[ -z "$confirm" || "$confirm" =~ ^[yY]$ ]]; then
                     remove_syn_fix || true
                 else
@@ -923,7 +923,7 @@ main_menu() {
                 fi
                 echo ""
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
                 continue
             fi
             
@@ -931,7 +931,7 @@ main_menu() {
                 log_info "Обнаружен nftables SYN FIX (mtpr_synfix). Удалить?"
                 echo -en "  ${BOLD}Удалить? [Y/n]:${NC} "
                 local confirm
-                read -r confirm
+                read -r confirm </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
                 if [[ -z "$confirm" || "$confirm" =~ ^[yY]$ ]]; then
                     remove_syn_fix || true
                 else
@@ -939,7 +939,7 @@ main_menu() {
                 fi
                 echo ""
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
                 continue
             fi
             
@@ -950,7 +950,7 @@ main_menu() {
             apply_basic_optimization
             echo ""
             echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-            read -rsn1
+            read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
             ;;
         3)
             open_proxy_menu
@@ -974,7 +974,7 @@ main_menu() {
             if [ -z "$OPENSSL_VERSION" ]; then
                 log_error "Не удалось определить версию OpenSSL"
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
                 continue
             fi
             
@@ -984,7 +984,7 @@ main_menu() {
                 echo -e "  ${YELLOW}Ваша версия OpenSSL: ${OPENSSL_VERSION}${NC}"
                 echo ""
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
                 continue
             fi
             
@@ -995,7 +995,7 @@ main_menu() {
             else
                 log_error "Файл $CHECKER_SCRIPT не найден"
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
             fi
             ;;
 
@@ -1151,14 +1151,14 @@ update_script() {
         echo -e "  ${GREEN}[✓]${NC} Обновление успешно!"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-        read -rsn1
+        read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
         exec "$0"
     else
         echo -e "  ${RED}[✗]${NC} Не удалось перезаписать файл"
         rm -f "$temp"
         echo ""
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-        read -rsn1
+        read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
         return 1
     fi
 }
@@ -1299,12 +1299,12 @@ install_node_manager() {
 	    echo -e "${NC}${BOLD}Для открытия Node Manager не через меню используйте команду: ${GREEN}${BOLD} mekomanager"
 	    echo -e ""
         echo -e "  ${GRAY}Нажмите любую клавишу для запуска Node Manager${NC}"
-        read -rsn1
+        read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
         exec "$MANAGER_SCRIPT"
     else
         log_error "Не удалось найти $MANAGER_SCRIPT после установки."
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-        read -rsn1
+        read -rsn1 </dev/tty 2>/dev/null || { echo; log_error "Нет доступа к терминалу для ввода. Выход."; exit 1; }
     fi
 }
 

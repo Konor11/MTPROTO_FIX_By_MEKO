@@ -1,6 +1,35 @@
 #!/bin/bash
 # telemt_panel_amirotin.sh — управление панелью Telemt Panel (amirotin)
 
+# ── Безопасный запуск внешнего установщика ────────────────────
+# Скачивает скрипт во временный файл, проверяет успех curl и
+# непустой ответ, и только затем запускает. Возвращает реальный
+# код запуска: раньше `curl ... | bash` давал 0 при пустом ответе
+# (404/сеть), из-за чего сбой выглядел как успешная установка.
+# Использование: fetch_and_run <sh|bash|sudo-bash> <url> [args...]
+fetch_and_run() {
+    local mode="$1"; shift
+    local url="$1"; shift
+    local tmp rc=0
+    tmp=$(mktemp) || return 1
+    if ! curl -fsSL "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        return 1
+    fi
+    case "$mode" in
+        sh)        sh "$tmp" "$@" || rc=$? ;;
+        bash)      bash "$tmp" "$@" || rc=$? ;;
+        sudo-bash) sudo bash "$tmp" "$@" || rc=$? ;;
+        *)         rc=1 ;;
+    esac
+    rm -f "$tmp"
+    return $rc
+}
+
 # ── Цвета ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -269,7 +298,7 @@ install_panel() {
     echo ""
     
     # Запускаем установку через официальный скрипт
-    if curl -fsSL https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh | bash; then
+    if fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh"; then
         echo ""
         echo -e "  ${GREEN}${BOLD}[✓]${NC} Панель Telemt Panel успешно установлена!"
         
@@ -316,7 +345,7 @@ uninstall_panel() {
         1)
             echo ""
             echo -e "  ${BLUE}[i]${NC} Выполнение uninstall..."
-            if curl -fsSL https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh | bash -s uninstall; then
+            if fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh" uninstall; then
                 echo ""
                 echo -e "  ${GREEN}${BOLD}[✓]${NC} Панель удалена (конфиг и данные сохранены)"
             else
@@ -338,7 +367,7 @@ uninstall_panel() {
             fi
             echo ""
             echo -e "  ${BLUE}[i]${NC} Выполнение purge..."
-            if curl -fsSL https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh | bash -s purge; then
+            if fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh" purge; then
                 echo ""
                 echo -e "  ${GREEN}${BOLD}[✓]${NC} Панель полностью удалена"
             else
@@ -457,7 +486,7 @@ update_panel() {
     echo -e "  ${BLUE}[i]${NC} Запуск обновления через установочный скрипт..."
     echo ""
     
-    if curl -fsSL https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh | bash; then
+    if fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh"; then
         echo ""
         local new_version=$(get_panel_version)
         echo -e "  ${GREEN}${BOLD}[✓]${NC} Панель обновлена!"

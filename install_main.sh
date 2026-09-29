@@ -123,8 +123,11 @@ while IFS='|' read -r file_path description; do
     [[ "$file_path" =~ ^[[:space:]]*#.*$ ]] && continue
     [ -z "$file_path" ] && continue
 
-    file_path=$(echo "$file_path" | xargs)
-    description=$(echo "$description" | xargs)
+    # Обрезаем пробелы без xargs (xargs ломает пути с пробелами/кавычками)
+    file_path="${file_path#"${file_path%%[![:space:]]*}"}"
+    file_path="${file_path%"${file_path##*[![:space:]]}"}"
+    description="${description#"${description%%[![:space:]]*}"}"
+    description="${description%"${description##*[![:space:]]}"}"
     
     file_name=$(basename "$file_path")
     
@@ -151,10 +154,16 @@ echo ""
 echo -e "  ${BOLD}Загрузка файлов...${NC}"
 echo ""
 
-printf "%s\n" "${FILES_TO_DOWNLOAD[@]}" | xargs -P 6 -I {} bash -c '
-    IFS="|" read -r file_path description <<< "$1"
-    download_file "$file_path" "$description"
-' _ {}
+MAX_PARALLEL=6
+while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    IFS='|' read -r file_path description <<< "$entry"
+    download_file "$file_path" "$description" &
+    while [ "$(jobs -rp | wc -l)" -ge "$MAX_PARALLEL" ]; do
+        wait -n || true
+    done
+done < <(printf '%s\n' "${FILES_TO_DOWNLOAD[@]}")
+wait || true
 
 # ── Проверка, что все файлы скачались ───────────────────────
 echo ""
@@ -178,9 +187,25 @@ fi
 # ── Установка прав и создание ссылки ────────────────────────
 echo ""
 echo -ne "  ${CYAN}[+]${NC} Установка прав выполнения... "
-chmod +x "$INSTALL_DIR/main.sh" 2>/dev/null || true
-chmod +x "$INSTALL_DIR"/proxys/*.sh 2>/dev/null || true
-chmod +x "$INSTALL_DIR"/*.py 2>/dev/null || true
+if ! chmod +x "$INSTALL_DIR/main.sh"; then
+    echo -e "  ${RED}[✗]${NC} Не удалось выставить права на main.sh"
+    rm -f "$MANIFEST_FILE"
+    exit 1
+fi
+if compgen -G "$INSTALL_DIR/proxys/*.sh" > /dev/null; then
+    if ! chmod +x "$INSTALL_DIR"/proxys/*.sh; then
+        echo -e "  ${RED}[✗]${NC} Не удалось выставить права на proxys/*.sh"
+        rm -f "$MANIFEST_FILE"
+        exit 1
+    fi
+fi
+if compgen -G "$INSTALL_DIR/*.py" > /dev/null; then
+    if ! chmod +x "$INSTALL_DIR"/*.py; then
+        echo -e "  ${RED}[✗]${NC} Не удалось выставить права на *.py"
+        rm -f "$MANIFEST_FILE"
+        exit 1
+    fi
+fi
 echo -e "${GREEN}✓${NC}"
 
 # Проверяем, что main.sh существует

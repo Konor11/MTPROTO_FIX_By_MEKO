@@ -1,6 +1,35 @@
 #!/bin/bash
 # telemt1.sh
 
+# ── Безопасный запуск внешнего установщика ────────────────────
+# Скачивает скрипт во временный файл, проверяет успех curl и
+# непустой ответ, и только затем запускает. Возвращает реальный
+# код запуска: раньше `curl ... | sh` давал 0 при пустом ответе
+# (404/сеть), из-за чего сбой выглядел как успешная установка.
+# Использование: fetch_and_run <sh|bash|sudo-bash> <url> [args...]
+fetch_and_run() {
+    local mode="$1"; shift
+    local url="$1"; shift
+    local tmp rc=0
+    tmp=$(mktemp) || return 1
+    if ! curl -fsSL "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        return 1
+    fi
+    case "$mode" in
+        sh)        sh "$tmp" "$@" || rc=$? ;;
+        bash)      bash "$tmp" "$@" || rc=$? ;;
+        sudo-bash) sudo bash "$tmp" "$@" || rc=$? ;;
+        *)         rc=1 ;;
+    esac
+    rm -f "$tmp"
+    return $rc
+}
+
 # ── Цвета ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -576,8 +605,29 @@ install_telemt() {
     cd /tmp
     unset INSTALL_DIR
 
+    # ── Флаги для upstream-установщика ────────────────────────
+    # -l 2 обязателен: интерфейс русский, иначе upstream задаёт
+    # лишний вопрос про язык. Порт берём из /opt/mtpr-simple/port
+    # или из текущего конфига (fallback 443), домен — из tls_domain
+    # конфига; без них upstream спрашивает порт/домен и может
+    # зависнуть на «Please specify the Server Port».
+    local _port="" _domain="" _cfg="" _info=""
+    if [ -f /opt/mtpr-simple/port ] && [ -s /opt/mtpr-simple/port ]; then
+        _port=$(head -1 /opt/mtpr-simple/port | tr -d '[:space:]')
+    fi
+    _info=$(detect_telemt_advanced)
+    _cfg=$(echo "$_info" | cut -d: -f1)
+    [ -z "$_port" ] && _port=$(echo "$_info" | cut -d: -f2)
+    if [ -n "$_cfg" ] && [ -f "$_cfg" ]; then
+        _domain=$(grep -E '^tls_domain[[:space:]]*=' "$_cfg" 2>/dev/null | head -1 | awk -F'=' '{print $2}' | tr -d ' "')
+    fi
+    [ -z "$_port" ] && _port="443"
+
+    local -a telemt_flags=(-l 2 -p "$_port")
+    [ -n "$_domain" ] && telemt_flags+=(-d "$_domain")
+
     if [ "$install_version" = "latest" ]; then
-        if curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh; then
+        if fetch_and_run sh "https://raw.githubusercontent.com/telemt/telemt/main/install.sh" "${telemt_flags[@]}"; then
             echo ""
             echo -e "  ${GREEN}[✓]${NC} Telemt успешно установлен (последняя версия)"
         else
@@ -585,7 +635,7 @@ install_telemt() {
             echo -e "  ${RED}[✗]${NC} Ошибка установки Telemt"
         fi
     else
-        if curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh -s -- "$install_version"; then
+        if fetch_and_run sh "https://raw.githubusercontent.com/telemt/telemt/main/install.sh" "$install_version" "${telemt_flags[@]}"; then
             echo ""
             echo -e "  ${GREEN}[✓]${NC} Telemt версии ${install_version} успешно установлен"
         else
@@ -641,7 +691,7 @@ purge_telemt() {
     echo ""
     echo -e "  ${BLUE}[i]${NC} Удаление Telemt..."
     echo ""
-    if curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh -s -- purge; then
+    if fetch_and_run sh "https://raw.githubusercontent.com/telemt/telemt/main/install.sh" purge -l 2; then
         echo ""
         echo -e "  ${GREEN}[✓]${NC} Telemt успешно удалён"
     else

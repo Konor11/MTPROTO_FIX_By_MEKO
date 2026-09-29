@@ -262,14 +262,23 @@ remove_server() {
     log_success "Конфиг удалён."
 
     log_info "Отзыв SSH-ключа на сервере..."
-    local pub_key=$(cat ~/.ssh/id_rsa.pub)
-    local escaped_key=$(echo "$pub_key" | sed 's/[\/&]/\\&/g')
-    # Используем таймаут и игнорируем ошибки
-    ssh -o ConnectTimeout=5 -o ConnectionAttempts=2 -p "$port" "$user@$ip" "sed -i '/$escaped_key/d' ~/.ssh/authorized_keys" 2>/dev/null || true
-    if [[ $? -eq 0 ]]; then
-        log_success "Ключ удалён из ~/.ssh/authorized_keys на сервере."
+    # Guard: без непустого публичного ключа escaped_key пуст, и тогда
+    # sed -i '//d' вычистил бы ВЕСЬ authorized_keys, отрезав SSH к серверу.
+    if [[ ! -s ~/.ssh/id_rsa.pub ]]; then
+        log_warning "Публичный ключ ~/.ssh/id_rsa.pub отсутствует или пуст — отзыв ключа пропущен, authorized_keys не тронут."
     else
-        log_warning "Не удалось удалить ключ (возможно, его там нет или доступ уже потерян)."
+        local pub_key
+        pub_key=$(cat ~/.ssh/id_rsa.pub)
+        local escaped_key
+        escaped_key=$(echo "$pub_key" | sed 's/[\/&]/\\&/g')
+        # Сохраняем реальный код возврата SSH (без маскировки через "|| true").
+        ssh -o ConnectTimeout=5 -o ConnectionAttempts=2 -p "$port" "$user@$ip" "sed -i '/$escaped_key/d' ~/.ssh/authorized_keys" 2>/dev/null
+        local rc=$?
+        if [[ $rc -eq 0 ]]; then
+            log_success "Ключ удалён из ~/.ssh/authorized_keys на сервере."
+        else
+            log_warning "Не удалось удалить ключ (возможно, его там нет или доступ уже потерян)."
+        fi
     fi
 
     log_success "Сервер $ip полностью удалён."
@@ -302,25 +311,40 @@ clean_all_on_server() {
 
     log_info "Начинаем очистку сервера $ip..."
 
-    # Все SSH-команды с таймаутом и подавлением ошибок
+    # Все SSH-команды с таймаутом. Код возврата каждой проверяем:
+    # раньше стояло глушение "|| true", поэтому полный провал был невидим,
+    # а в конце всегда печатался ложный успех.
     local SSH_OPTS="-o ConnectTimeout=5 -o ConnectionAttempts=2 -p $port"
+    local had_error=0
+    local rc=0
 
     # 1. Удаление Telemt (стандартный)
     log_info "Удаление Telemt (стандартный)..."
-    ssh $SSH_OPTS "$user@$ip" "curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh -s -- purge" 2>/dev/null || true
+    # -l 2 обязателен: без него upstream уходит в интерактивный вопрос выбора языка
+    ssh $SSH_OPTS "$user@$ip" "curl -fsSL https://raw.githubusercontent.com/telemt/telemt/main/install.sh | sh -s -- purge -l 2" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 1 (Telemt) завершился с кодом $rc."; }
 
     # 2. Удаление Telemt Docker
     log_info "Удаление Telemt (Docker)..."
-    ssh $SSH_OPTS "$user@$ip" "bash -c 'cd /root/telemt 2>/dev/null && docker compose down -v 2>/dev/null; cd /root && rm -rf /root/telemt 2>/dev/null; docker rmi ghcr.io/telemt/telemt:* 2>/dev/null || true'" 2>/dev/null || true
+    ssh $SSH_OPTS "$user@$ip" "bash -c 'cd /root/telemt 2>/dev/null && docker compose down -v 2>/dev/null; cd /root && rm -rf /root/telemt 2>/dev/null; docker rmi ghcr.io/telemt/telemt:* 2>/dev/null || true'" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 2 (Telemt Docker) завершился с кодом $rc."; }
 
     # 3. Удаление MTProtoZig
     log_info "Удаление MTProtoZig..."
-    ssh $SSH_OPTS "$user@$ip" "sudo mtbuddy uninstall --yes" 2>/dev/null || true
-    ssh $SSH_OPTS "$user@$ip" "systemctl stop mtproto-proxy 2>/dev/null; systemctl disable mtproto-proxy 2>/dev/null; rm -f /etc/systemd/system/mtproto-proxy.service; pkill -f mtbuddy 2>/dev/null || true" 2>/dev/null || true
+    ssh $SSH_OPTS "$user@$ip" "sudo mtbuddy uninstall --yes" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 3a (mtbuddy uninstall) завершился с кодом $rc."; }
+    ssh $SSH_OPTS "$user@$ip" "systemctl stop mtproto-proxy 2>/dev/null; systemctl disable mtproto-proxy 2>/dev/null; rm -f /etc/systemd/system/mtproto-proxy.service; pkill -f mtbuddy 2>/dev/null || true" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 3b (mtproto-proxy) завершился с кодом $rc."; }
 
     # 4. Удаление MTG
     log_info "Удаление MTG..."
-    ssh $SSH_OPTS "$user@$ip" "systemctl stop mtg.service 2>/dev/null; systemctl disable mtg.service 2>/dev/null; rm -f /etc/systemd/system/mtg.service 2>/dev/null; rm -f /usr/local/bin/mtg 2>/dev/null; rm -f /etc/mtg.toml 2>/dev/null; rm -f /opt/mtpr-simple/mtg_config_path 2>/dev/null" 2>/dev/null || true
+    ssh $SSH_OPTS "$user@$ip" "systemctl stop mtg.service 2>/dev/null; systemctl disable mtg.service 2>/dev/null; rm -f /etc/systemd/system/mtg.service 2>/dev/null; rm -f /usr/local/bin/mtg 2>/dev/null; rm -f /etc/mtg.toml 2>/dev/null; rm -f /opt/mtpr-simple/mtg_config_path 2>/dev/null" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 4 (MTG) завершился с кодом $rc."; }
 
     # 5. Удаление MEKO FIX (SYN FIX)
     log_info "Удаление MEKO FIX (SYN FIX)..."
@@ -338,17 +362,27 @@ clean_all_on_server() {
         rm -f /opt/mtpr-simple/apply-mtpr-synfix.sh 2>/dev/null
         rm -f /opt/mtpr-simple/mtpr-synfix-nft.sh 2>/dev/null
         rm -f /opt/mtpr-simple/port 2>/dev/null
-    '" 2>/dev/null || true
+    '" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 5 (MEKO FIX) завершился с кодом $rc."; }
 
     # 6. Удаление 3xUI
     log_info "Удаление 3xUI..."
-    ssh $SSH_OPTS "$user@$ip" "bash -c 'echo y | x-ui uninstall 2>/dev/null; systemctl stop x-ui 2>/dev/null; systemctl disable x-ui 2>/dev/null; rm -rf /etc/3x-ui /usr/local/x-ui 2>/dev/null'" 2>/dev/null || true
+    ssh $SSH_OPTS "$user@$ip" "bash -c 'echo y | x-ui uninstall 2>/dev/null; systemctl stop x-ui 2>/dev/null; systemctl disable x-ui 2>/dev/null; rm -rf /etc/3x-ui /usr/local/x-ui 2>/dev/null'" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 6 (3xUI) завершился с кодом $rc."; }
 
     # 7. Очистка остатков MEKO
     log_info "Удаление каталогов MEKO..."
-    ssh $SSH_OPTS "$user@$ip" "rm -rf /opt/mtpr-simple /opt/telemt /etc/telemt /etc/telemt.toml /opt/mtproto-proxy 2>/dev/null || true" 2>/dev/null || true
+    ssh $SSH_OPTS "$user@$ip" "rm -rf /opt/mtpr-simple /opt/telemt /etc/telemt /etc/telemt.toml /opt/mtproto-proxy 2>/dev/null || true" 2>/dev/null
+    rc=$?
+    [[ $rc -ne 0 ]] && { had_error=1; log_warning "Шаг 7 (каталоги MEKO) завершился с кодом $rc."; }
 
-    log_success "Очистка сервера $ip завершена."
+    if [[ $had_error -eq 0 ]]; then
+        log_success "Очистка сервера $ip завершена."
+    else
+        log_warning "Очистка сервера $ip завершена с ошибками (см. предупреждения выше)."
+    fi
     read -p "Нажмите Enter для продолжения..."
 }
 
@@ -412,10 +446,10 @@ server_submenu() {
         echo -e "  ${CYAN}[1]${NC}${BOLD} Проверить статус ноды (онлайн/оффлайн)"
         echo -e ""
         echo -e "  ${CYAN}[2]${NC}${BOLD} Меню работы с прокси"
-        echo -e "  ${CYAN}[4]${NC}${BOLD} Выполнить произвольную команду"
-        echo -e "  ${CYAN}[5]${RED}${BOLD} Удалить сервер ${NC}(отозвать ключ и конфиг)${NC}"
-        echo -e "  ${CYAN}[6]${YELLOW}${BOLD} Очистить всё на сервере ${NC}(прокси + фиксы)${NC}"
-        echo -e "  ${CYAN}[7]${NC} ${BOLD}Меню фиксов (SYN FIX/Zapret2)${NC}"
+        echo -e "  ${CYAN}[3]${NC}${BOLD} Выполнить произвольную команду"
+        echo -e "  ${CYAN}[4]${RED}${BOLD} Удалить сервер ${NC}(отозвать ключ и конфиг)${NC}"
+        echo -e "  ${CYAN}[5]${YELLOW}${BOLD} Очистить всё на сервере ${NC}(прокси + фиксы)${NC}"
+        echo -e "  ${CYAN}[6]${NC} ${BOLD}Меню фиксов (SYN FIX/Zapret2)${NC}"
         echo -e ""
         echo -e "  ${CYAN}[0]${NC}${BOLD} Назад"
         echo ""
@@ -449,7 +483,7 @@ server_submenu() {
                     read -p "Нажмите Enter для продолжения..."
                 fi
                 ;;
-            4)
+            3)
                 echo ""
                 echo -en "  ${BOLD}Введите команду для выполнения на сервере:${NC} "
                 local cmd
@@ -462,14 +496,14 @@ server_submenu() {
                 fi
                 read -p "Нажмите Enter для продолжения..."
                 ;;
-            5)
+            4)
                 remove_server "$ip" "$user" "$port"
                 return 0  # выходим из подменю, возвращаемся в список
                 ;;
-            6)
+            5)
                 clean_all_on_server "$ip" "$user" "$port"
                 ;;
-            7)
+            6)
                 echo ""
                 local NODE_RULES_SCRIPT="$SCRIPT_DIR/rules1_node.sh"
                 if [ -f "$NODE_RULES_SCRIPT" ]; then

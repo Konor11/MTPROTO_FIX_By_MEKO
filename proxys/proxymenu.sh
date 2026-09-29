@@ -26,7 +26,7 @@ while true; do
     echo -e "  ${RED}[0]${NC}  ${BOLD}Назад в главное меню${NC}"
     echo ""
     echo -en "  ${BOLD}Ввод:${NC} "
-    read -r choice
+    read -r choice </dev/tty 2>/dev/null || { echo; break; }
 
     case "$choice" in
         1)
@@ -36,7 +36,7 @@ while true; do
                 echo ""
                 echo "  [✗] Файл /opt/mtpr-simple/proxys/telemt1.sh не найден"
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; break; }
             fi
             ;;
         2)
@@ -52,7 +52,7 @@ while true; do
                 echo -e "  ${RED}[0]${NC}  ${BOLD}Назад в прокси меню${NC}"
                 echo ""
                 echo -en "  ${BOLD}Ввод:${NC} "
-                read -r sub_choice
+                read -r sub_choice </dev/tty 2>/dev/null || { echo; break; }
 
                 case "$sub_choice" in
                     1)
@@ -62,7 +62,7 @@ while true; do
                             echo ""
                             echo "  [✗] Файл /opt/mtpr-simple/proxys/telemt_panel_amirotin.sh не найден"
                             echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-                            read -rsn1
+                            read -rsn1 </dev/tty 2>/dev/null || { echo; break; }
                         fi
                         ;;
                     0)
@@ -82,7 +82,7 @@ while true; do
                 echo ""
                 echo "  [✗] Файл /opt/mtpr-simple/proxys/mtprotozig1.sh не найден"
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; break; }
             fi
             ;;
         4)
@@ -92,7 +92,7 @@ while true; do
                 echo ""
                 echo "  [✗] Файл /opt/mtpr-simple/proxys/mtgv2_1.sh не найден"
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-                read -rsn1
+                read -rsn1 </dev/tty 2>/dev/null || { echo; break; }
             fi
             ;;
         0)

@@ -19,6 +19,50 @@ log_success() { echo -e "  ${GREEN}[✓]${NC} $1"; }
 log_error() { echo -e "  ${RED}[✗]${NC} $1" >&2; }
 log_warning() { echo -e "  ${YELLOW}[!]${NC} $1"; }
 
+# ── URL-ы установщика 3x-ui-pro ──────────────────────────────
+XUI_INSTALLER_URL="https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-latest.sh"
+XUI_PATCH_URL="https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-patch.sh"
+
+# ── Внешний IPv4 сервера ─────────────────────────────────────
+get_public_ip() {
+    local ip
+    ip=$(ip route get 8.8.8.8 2>/dev/null | grep -Po -- 'src \K\S*' | head -1)
+    if ! [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        ip=$(curl -4 -fsS --max-time 10 https://ipv4.icanhazip.com 2>/dev/null | tr -d '[:space:]')
+    fi
+    if [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        echo "$ip"
+    fi
+}
+
+# ── Пауза «нажмите любую клавишу» ────────────────────────────
+pause_key() {
+    echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
+    read -rsn1 </dev/tty 2>/dev/null || true
+}
+
+# ── Ввод домена (пустой ввод = значение по умолчанию) ────────
+#  Спрашиваем через /dev/tty, значение отдаём в stdout — чтобы
+#  вызывающий код мог забрать его через $(ask_domain ...).
+ask_domain() {
+    local prompt="$1" default="$2" value=""
+    echo -en "  ${BOLD}${prompt}${NC} ${DIM}[${default}]${NC}: " >/dev/tty
+    read -r value </dev/tty 2>/dev/null || value=""
+    value="${value//[[:space:]]/}"
+    if [ -n "$value" ]; then
+        echo "$value"
+    else
+        echo "$default"
+    fi
+}
+
+# ── Проверка, что домен указывает A-записью на наш IP ────────
+domain_points_here() {
+    local d="$1" ip="$2" a
+    a=$(getent ahostsv4 "$d" 2>/dev/null | awk 'NR==1{print $1}')
+    [ "$a" = "$ip" ]
+}
+
 # ── Проверка root ────────────────────────────────────────────
 if [ "$(id -u)" -ne 0 ]; then
     echo -e "${RED}[✗]${NC} Запустите от root" >&2
@@ -36,6 +80,65 @@ install_3xui() {
     log_info "Установка 3x-ui..."
     echo ""
 
+    # ── Проверка поддержки (как в upstream check_os/check_cpu) ──
+    local os_id="" os_ver=""
+    if [ -r /etc/os-release ]; then
+        . /etc/os-release 2>/dev/null || true
+        os_id="${ID:-}"
+        os_ver="${VERSION_ID:-}"
+    fi
+    case "$os_id" in
+        ubuntu)
+            if [[ "$os_ver" != "24.04" && "$os_ver" != "26.04" ]]; then
+                log_error "Установщик 3x-ui-pro поддерживает Ubuntu 24.04 и 26.04 (у вас $os_id $os_ver)."
+                pause_key
+                return 1
+            fi
+            ;;
+        debian)
+            if [[ "$os_ver" != "12" && "$os_ver" != "13" ]]; then
+                log_error "Установщик 3x-ui-pro поддерживает Debian 12 и 13 (у вас $os_id $os_ver)."
+                pause_key
+                return 1
+            fi
+            ;;
+        *)
+            log_error "3x-ui-pro не поддерживает $os_id $os_ver (только Ubuntu 24.04/26.04, Debian 12/13)."
+            pause_key
+            return 1
+            ;;
+    esac
+    if grep -m1 'model name' /proc/cpuinfo 2>/dev/null | grep -qi 'QEMU'; then
+        log_error "Обнаружен эмулированный QEMU-процессор — установщик 3x-ui-pro откажется работать."
+        log_error "Попросите хостера включить host-passthrough (host CPU)."
+        pause_key
+        return 1
+    fi
+
+    # ── Проверка занятости 443 ──────────────────────────────
+    #  Upstream поднимает nginx с SSL на 443. Если порт занят (например telemt
+    #  держит MTProto на 443), nginx не стартует и патч панели не применится —
+    #  ровно это и наблюдалось вживую. Предупреждаем заранее.
+    local holder443=""
+    if command -v ss >/dev/null 2>&1 && ss -tlnH 2>/dev/null | awk '{print $4}' | grep -qE '[:.]443$'; then
+        holder443=$(ss -tlnpH 2>/dev/null | awk '$4 ~ /[:.]443$/ {print $NF}' | head -1)
+        log_warning "Порт 443 уже занят${holder443:+ (${holder443})}!"
+        log_warning "3x-ui-pro поднимает nginx+SSL на 443: пока порт занят, панель не установится полностью."
+        log_warning "Освободите порт (например: systemctl stop telemt) и повторите установку."
+        if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+            echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
+            local c443=""
+            read -r c443 </dev/tty 2>/dev/null || c443=""
+            if [[ ! "$c443" =~ ^[yY]$ ]]; then
+                log_info "Установка отменена. Освободите порт 443 и запустите снова."
+                return 0
+            fi
+        else
+            log_error "Порт 443 занят, а терминала для подтверждения нет."
+            return 1
+        fi
+    fi
+
     # Проверка блокировки apt
     log_info "Проверка блокировки менеджера пакетов apt..."
     local wait_seconds=0
@@ -44,8 +147,7 @@ install_3xui() {
         if [ $wait_seconds -ge $max_wait ]; then
             log_error "Блокировка apt не снята за $max_wait секунд."
             log_error "Попробуйте остановить unattended-upgrades вручную: sudo systemctl stop unattended-upgrades"
-            echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-            read -rsn1 </dev/tty 2>/dev/null
+            pause_key
             return 1
         fi
         log_warning "Обнаружена блокировка apt (возможно, unattended-upgrades). Ждём 5 секунд..."
@@ -54,18 +156,86 @@ install_3xui() {
     done
     log_success "Блокировка apt снята, продолжаем установку."
 
-    log_info "Запуск установки 3x-ui (это может занять несколько минут)..."
-    echo ""
-    if sudo su -c "bash <(wget -qO- https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-latest.sh) -install yes -auto_domain y"; then
-        log_success "3x-ui установлен"
-    else
-        log_error "Ошибка установки 3x-ui"
-        echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1 </dev/tty 2>/dev/null
+    # ── Домены ──────────────────────────────────────────────
+    #  Upstream-установщик НЕ знает флага -auto_domain (он принимает только
+    #  -subdomain и -reality_domain). Если домен не передан, validate_domains()
+    #  крутит бесконечный prompt «Enter available subdomain» (issue #28),
+    #  поэтому домены спрашиваем сами и передаём явно.
+    local IP PANEL_DOMAIN REALITY_DOMAIN
+    IP=$(get_public_ip)
+    if [ -z "$IP" ]; then
+        log_error "Не удалось определить внешний IPv4 сервера."
+        pause_key
         return 1
     fi
 
-    # Применение патча
+    echo ""
+    log_info "Для установки нужны два разных домена с A-записью на IP ${BOLD}$IP${NC}"
+    log_info "Пустое поле = бесплатный домен sslip.io (DNS уже настроен, сертификат Let's Encrypt)."
+    echo ""
+    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        PANEL_DOMAIN=$(ask_domain "Домен панели:" "$IP.sslip.io")
+        REALITY_DOMAIN=$(ask_domain "Домен REALITY (другой):" "reality.$IP.sslip.io")
+    else
+        PANEL_DOMAIN="$IP.sslip.io"
+        REALITY_DOMAIN="reality.$IP.sslip.io"
+    fi
+
+    if [ "$PANEL_DOMAIN" = "$REALITY_DOMAIN" ]; then
+        log_error "Домен панели и домен REALITY должны различаться."
+        pause_key
+        return 1
+    fi
+
+    local d
+    for d in "$PANEL_DOMAIN" "$REALITY_DOMAIN"; do
+        if ! domain_points_here "$d" "$IP"; then
+            log_error "$d не указывает на $IP (нет A-записи)."
+            log_error "Настройте DNS или оставьте поле пустым — подставится sslip.io."
+            pause_key
+            return 1
+        fi
+    done
+    log_success "Домены проверены: $PANEL_DOMAIN / $REALITY_DOMAIN"
+
+    # ── Установка ───────────────────────────────────────────
+    local installer
+    installer=$(mktemp /tmp/x-ui-latest.XXXXXX.sh)
+    log_info "Загрузка установщика 3x-ui-pro..."
+    if ! curl -fsSL "$XUI_INSTALLER_URL" -o "$installer" || [ ! -s "$installer" ]; then
+        log_error "Не удалось загрузить установщик 3x-ui-pro."
+        rm -f "$installer"
+        pause_key
+        return 1
+    fi
+
+    log_info "Запуск установки 3x-ui (это может занять несколько минут)..."
+    echo ""
+    local rc=0
+    if [ -r /dev/tty ]; then
+        bash "$installer" -install y -subdomain "$PANEL_DOMAIN" -reality_domain "$REALITY_DOMAIN" </dev/tty || rc=$?
+    else
+        bash "$installer" -install y -subdomain "$PANEL_DOMAIN" -reality_domain "$REALITY_DOMAIN" </dev/null || rc=$?
+    fi
+    rm -f "$installer"
+
+    if [ $rc -eq 0 ]; then
+        log_success "3x-ui установлен"
+    else
+        log_error "Ошибка установки 3x-ui (код возврата $rc)"
+        pause_key
+        return 1
+    fi
+
+    # ── Проверка, что служба поднялась ──────────────────────
+    sleep 2
+    if is_3xui_installed && systemctl is-active --quiet x-ui; then
+        log_success "Служба x-ui активна"
+    else
+        log_warning "Служба x-ui не активна — проверьте: journalctl -u x-ui -n 50"
+    fi
+
+    # ── Применение патча ────────────────────────────────────
     log_info "Применение патча 3x-ui..."
     wait_seconds=0
     while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
@@ -78,7 +248,16 @@ install_3xui() {
         wait_seconds=$((wait_seconds + 5))
     done
 
-    if bash <(curl -fsSL https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-patch.sh); then
+    local patcher
+    patcher=$(mktemp /tmp/x-ui-patch.XXXXXX.sh)
+    rc=0
+    if ! curl -fsSL "$XUI_PATCH_URL" -o "$patcher" || [ ! -s "$patcher" ]; then
+        rc=1
+    else
+        bash "$patcher" </dev/null || rc=$?
+    fi
+    rm -f "$patcher"
+    if [ $rc -eq 0 ]; then
         log_success "Патч применён"
     else
         log_warning "Патч не применился (возможно, он не требуется или apt всё ещё занят)"
@@ -86,8 +265,7 @@ install_3xui() {
 
     echo ""
     log_success "Установка 3x-ui завершена!"
-    echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1 </dev/tty 2>/dev/null
+    pause_key
 }
 
 # ── Выполнение команды x-ui с проверкой установки ────────────
@@ -99,7 +277,7 @@ run_xui_cmd() {
         echo ""
         log_error "Панель 3x-ui не установлена. Сначала выполните установку (пункт 1)."
         echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-        read -rsn1 </dev/tty 2>/dev/null
+        read -rsn1 </dev/tty 2>/dev/null || true
         return 1
     fi
     
@@ -117,14 +295,14 @@ run_xui_cmd() {
     esac
     echo ""
     echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-    read -rsn1 </dev/tty 2>/dev/null
+    read -rsn1 </dev/tty 2>/dev/null || true
 }
 
 # ── Главное меню 3x-ui ────────────────────────────────────────
 while true; do
     clear 2>/dev/null || printf '\033[2J\033[H'
     echo ""
-    echo -e "  ${CYAN}${BOLD}⚙️ ${NC}${BOLD}Meko Manager ${CYAN}${BOLD}| ${NC}${BOLD}Меню 3x-ui ${CYAN}${BOLD}v1.96 ${CYAN}${BOLD}⚙️${NC}"
+    echo -e "  ${CYAN}${BOLD}⚙️ ${NC}${BOLD}Meko Manager ${CYAN}${BOLD}| ${NC}${BOLD}Меню 3x-ui ${CYAN}${BOLD}v1.97 ${CYAN}${BOLD}⚙️${NC}"
     echo -e "  ${BOLD}${DIM}═════════════════════════════════════════════════${NC}"
     echo ""
 
@@ -168,34 +346,34 @@ while true; do
 
     case "$choice" in
         1)
-            install_3xui
+            install_3xui || true
             ;;
         2)
-            run_xui_cmd "start" "Запуск панели"
+            run_xui_cmd "start" "Запуск панели" || true
             ;;
         3)
-            run_xui_cmd "stop" "Остановка панели"
+            run_xui_cmd "stop" "Остановка панели" || true
             ;;
         4)
-            run_xui_cmd "restart" "Перезапуск панели"
+            run_xui_cmd "restart" "Перезапуск панели" || true
             ;;
         5)
-            run_xui_cmd "status" "Статус панели"
+            run_xui_cmd "status" "Статус панели" || true
             ;;
         6)
-            run_xui_cmd "settings" "Настройки панели"
+            run_xui_cmd "settings" "Настройки панели" || true
             ;;
         7)
-            run_xui_cmd "log" "Просмотр логов (Ctrl+C для выхода)"
+            run_xui_cmd "log" "Просмотр логов (Ctrl+C для выхода)" || true
             ;;
         8)
-            run_xui_cmd "enable" "Включение автозапуска"
+            run_xui_cmd "enable" "Включение автозапуска" || true
             ;;
         9)
-            run_xui_cmd "disable" "Отключение автозапуска"
+            run_xui_cmd "disable" "Отключение автозапуска" || true
             ;;
         10)
-            run_xui_cmd "update" "Обновление панели"
+            run_xui_cmd "update" "Обновление панели" || true
             ;;
         11)
             if is_3xui_installed; then
@@ -203,13 +381,11 @@ while true; do
                 log_warning "Вы уверены, что хотите удалить панель 3x-ui и Xray?"
                 echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
                 confirm=""
-                read -r confirm </dev/tty 2>/dev/null
+                read -r confirm </dev/tty 2>/dev/null || confirm=""
                 if [[ "$confirm" =~ ^[yY]$ ]]; then
                     log_info "Запуск удаления..."
                     # Автоматически подтверждаем второй запрос
-                    echo "y" | x-ui uninstall
-                    echo ""
-                    if [ $? -eq 0 ]; then
+                    if echo "y" | x-ui uninstall; then
                         log_success "Панель удалена."
                     else
                         log_error "Ошибка при удалении панели."
@@ -218,12 +394,12 @@ while true; do
                     log_info "Удаление отменено."
                 fi
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню...${NC}"
-                read -rsn1 </dev/tty 2>/dev/null
+                read -rsn1 </dev/tty 2>/dev/null || true
             else
                 echo ""
                 log_error "Панель не установлена."
                 echo -e "  ${GRAY}Нажмите любую клавишу для возврата...${NC}"
-                read -rsn1 </dev/tty 2>/dev/null
+                read -rsn1 </dev/tty 2>/dev/null || true
             fi
             ;;
         0)
@@ -235,7 +411,7 @@ while true; do
             echo ""
             log_warning "Неверный выбор."
             echo -e "  ${GRAY}Нажмите любую клавишу для продолжения...${NC}"
-            read -rsn1 </dev/tty 2>/dev/null
+            read -rsn1 </dev/tty 2>/dev/null || true
             ;;
     esac
 done
