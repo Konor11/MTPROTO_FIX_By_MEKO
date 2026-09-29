@@ -93,7 +93,7 @@ _Full IPTABLES, NFTABLES rules and zapret2 settings are defined in [rules.sh](ht
 
 **TTL (Time To Live)** — a field in the IP packet indicating how many hops it can traverse. Differs between iOS and Android/Desktop, used for device type detection.
 
-**u32 (filter)** — an iptables module that allows analysing arbitrary bytes in a packet. Used in V3 to detect iOS by fingerprint.
+**u32 (filter)** — an iptables module that allows analysing arbitrary bytes in a packet. Used in V3 to detect iOS by fingerprint. On RHEL-compatible systems (AlmaLinux / Rocky / CentOS 9) this module is missing out of the box — the launcher connects the **elrepo** repository and installs **kmod-xt_u32** for the required branch, then explicitly verifies that the module actually loaded.
 
 **mangle** — an iptables table for modifying packet properties (e.g., marking). Used in V3 to mark iOS packets.
 
@@ -133,7 +133,7 @@ _Full IPTABLES, NFTABLES rules and zapret2 settings are defined in [rules.sh](ht
 
 ## Project tools and terms
 
-**MEKO Launcher** — a unified launcher for managing all proxies (Telemt, MTG, MTProto.zig), panels, installing the fix, configuration, and updates.
+**MEKO Launcher** — a unified launcher for managing all proxies (Telemt, MTG, MTProto.zig), panels, installing the fix, configuration, and updates. The main menu has item `[8]` — "Extras" (secondary functions) and `[9]` — removal. You can also manage it without the menu — via the `mekopr` command (`--menu`, `--install`, `--remove`, `--status`, `--help`).
 
 **Telemt Panel** — a web interface (by amirotin) for managing the Telemt server: status viewing, users, logs.
 
@@ -143,7 +143,23 @@ _Full IPTABLES, NFTABLES rules and zapret2 settings are defined in [rules.sh](ht
 
 **Nginx** — a high‑performance web server, reverse proxy, load balancer, and HTTP cache. In the context of MTProto proxies, it is used with **SelfSteal** to disguise the proxy as a legitimate HTTPS site. To work correctly with modern **iOS** clients that require the post‑quantum **X25519MLKEM768** algorithm, **nginx** must be compiled with **OpenSSL 3.5+**. Otherwise, the domain will not pass the **SNI** check and **iOS** devices will **not** be able to connect to the proxy.
 
-**Caddy** — a web server with automatic SSL, an alternative to nginx for SelfSteal (does not require OpenSSL 3.5 on the server because it supports hybrid encryption out of the box).
+**Caddy** — a web server with automatic SSL, an alternative to nginx for SelfSteal (does not require OpenSSL 3.5 on the server because it supports hybrid encryption out of the box). The "Extras" menu (`[8]` of the main menu) has a ready item **[3] Caddy as a PQ stub (SelfSteal)**: installs Caddy 2.10+ from the official repository, obtains a Let's Encrypt certificate and sets up a stub listening locally on 127.0.0.1:8443.
+
+**"Extras" menu** — item `[8]` of the main menu (`data/extra_menu.sh`), combines secondary functions so the main menu stays short: `[1]` GEOIP SYN-limit bypass, `[2]` rate limiting (IPv4 shaping), `[3]` Caddy as a PQ stub, `[4]` extra services (WARP, AdGuard Home), `[5]` panel backup and restore, `[6]` security. Each submenu runs as a separate `bash` process, so exiting it returns to `[8]`.
+
+**GEOIP SYN-limit bypass** — item `[1]` of the "Extras" menu (or `bash /opt/mtpr-simple/data/rules.sh -geoip`). Connections from IPs outside the "own" countries (`RU,CN,IR,VN,CU,SO,NP,TM,OM,UA`) are accepted before the SYN-limiter rules and cannot be wrongly blocked. Installs **xtables-addons**, builds the GeoLite2 database (`xt_geoip_dl` + `xt_geoip_build`) and inserts the rule first in **INPUT**; daily database update — cron job `/etc/cron.daily/xt_geoip`.
+
+**Rate limiting (IPv4 shaping)** — item `[2]` of the "Extras" menu (`data/shaping.sh`). Optional egress shaper for outgoing traffic via `tc` HTB + flower filters: an overall speed cap and a separate limit per client IPv4 address. Modes: **manual**, **fixed** (formula from the channel), **dynamic** (recalculated by the number of active IPs). The incoming SYN fix is not affected.
+
+**Security (TLS fingerprints and IP/subnet blocking)** — item `[6]` of the "Extras" menu (`data/security.sh`). Shows client TLS fingerprints (JA3/JA4) from the Telemt engine API and allows blocking unwanted **IPs and subnets** via its own nft table `inet mtpr_block` (sets `mtpr_block4`/`mtpr_block6`, drop/reject action with counters). The list is stored in `/opt/mtpr-simple/ipblock.list`, auto-start after reboot — the `mtpr-block.service` unit.
+
+**Panel backup and restore** — item `[5]` of the "Extras" menu (`data/backup_panel.sh`). Builds a `tar.gz` with everything needed to migrate a server (`/etc/telemt`, `/opt/mtpr-simple`, systemd units, cron jobs, MTG/MTProtoZig configs) into `/root/mtpr-backups/`. Restore unpacks the archive into `/`, runs `daemon-reload` and honestly reports which services are actually active/enabled. Scopes: `all` / `telemt` / `fix`.
+
+**Extra services (WARP, AdGuard Home)** — item `[4]` of the "Extras" menu (`data/services_menu.sh`). Installs the **Cloudflare WARP** client (from the official repository; it changes routing — confirmation required) and **AdGuard Home** (the installer is downloaded to a file and run separately, without `curl | sh`; occupies port 53 by default).
+
+**Node client sync** — item `[3]` of the server menu (`remote_ctl/node_manager.sh`). Takes the client list from the local Telemt config (`[access.users]`) and adds the missing ones on remote nodes; existing clients are not removed or overwritten. A `telemt.toml.bak.<date>` backup is made before editing, with automatic rollback on error.
+
+**WEB proxy (Telemt WEB mode)** — item `[w]` in the Telemt menu. Sets up the Telemt WEB mode (domain, user, secret, nginx), allows setting a path inside the domain (`base_path`, requires telemt 3.5.8+), enabling bridge reports and showing the ready `tg://webproxy` link. Config edits go through backup and TOML validation.
 
 **Combo** — an informal term in the community for a project that combines several proxies and tools in one menu.
 

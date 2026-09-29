@@ -131,7 +131,7 @@ Applies a set of rules to the server that splits devices into two types – **io
 - When using **v2** fix, which identifies device by **TTL + Length**, connecting from **iOS** – the connection may pass through load balancers, increasing **TTL** above the limit, so the script misidentifies the device as desktop/Android instead of iPhone, resulting in a block – in that case **you must use v3 fix**.
 - When using the fix without **MSS**, **you must ensure that the domain used for Fake TLS supports X25519 MLKEM768** – you can check this **via the built‑in domain checker** or **via bot: @Sni_checker_bot**. **If the chosen domain does not support it – after an iOS connection attempt you'll get a block and the connection will fail.**
 - **If you use SelfSteal instead of a foreign domain**, ensure that your nginx was compiled with OpenSSL 3.5 – **otherwise periodic iOS connection issues will occur**. For proper SelfSteal operation, install **nginx** built with **3.5** or upgrade **OpenSSL** on your server to **3.5** and rebuild **nginx**.
-    - Alternative 1: use **caddy**.
+    - Alternative 1: use **caddy** — the "Extras" menu (`[8]` of the main menu) has a ready item **[3] Caddy as a PQ stub (SelfSteal)** (installs Caddy 2.10+ and sets up the stub automatically, system OpenSSL is untouched).
     - Alternative 2: enable **MSS**, but then media will load **very slowly**.
 - If you enabled **MSS** because your domain doesn't support **X25519MLKEM768** and you can't use another one, and media load slowly – that's expected. MSS reduces packet size, directly affecting download speed.
 

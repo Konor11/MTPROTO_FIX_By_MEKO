@@ -93,7 +93,7 @@ _完整的 IPTABLES、NFTABLES 规则和 zapret2 设置见 [rules.sh](https://gi
 
 **TTL（生存时间）** — IP 包中的一个字段，表示它可以经过多少跳。iOS 与 Android/Desktop 的 TTL 不同，用于识别设备类型。
 
-**u32（过滤器）** — iptables 的一个模块，允许分析数据包中的任意字节。在 V3 中用于通过指纹识别 iOS。
+**u32（过滤器）** — iptables 的一个模块，允许分析数据包中的任意字节。在 V3 中用于通过指纹识别 iOS。在 RHEL 兼容系统（AlmaLinux / Rocky / CentOS 9）上，该模块默认缺失——启动器会自动接入 **elrepo** 仓库，为对应分支安装 **kmod-xt_u32**，然后显式验证模块是否真正加载。
 
 **mangle** — iptables 中用于修改数据包属性（如标记）的表。在 V3 中用于标记 iOS 包。
 
@@ -133,7 +133,7 @@ _完整的 IPTABLES、NFTABLES 规则和 zapret2 设置见 [rules.sh](https://gi
 
 ## 项目工具与术语
 
-**MEKO Launcher** — 统一的启动器，用于管理所有代理（Telemt、MTG、MTProto.zig）、面板、安装修复、配置和更新。
+**MEKO Launcher** — 统一的启动器，用于管理所有代理（Telemt、MTG、MTProto.zig）、面板、安装修复、配置和更新。主菜单中有 `[8]` — “附加功能”（次要功能）和 `[9]` — 删除。也可以不通过菜单，直接用 `mekopr` 命令管理（`--menu`、`--install`、`--remove`、`--status`、`--help`）。
 
 **Telemt 面板** — 一个 Web 界面（由 amirotin 开发），用于管理 Telemt 服务器：查看状态、用户、日志。
 
@@ -143,7 +143,23 @@ _完整的 IPTABLES、NFTABLES 规则和 zapret2 设置见 [rules.sh](https://gi
 
 **Nginx** — 高性能 Web 服务器、反向代理、负载均衡器和 HTTP 缓存。在 MTProto 代理的上下文中，它与 **SelfSteal** 配合，将代理伪装成合法的 HTTPS 网站。为了与现代 **iOS** 客户端（需要后量子算法 **X25519MLKEM768**）正常协作，**nginx** 必须使用 **OpenSSL 3.5+** 编译。否则，域名将无法通过 **SNI** 检查，**iOS** 设备将 **无法** 连接到代理。
 
-**Caddy** — 支持自动 SSL 的 Web 服务器，是 nginx 在 SelfSteal 场景下的替代方案（它开箱即用地支持混合加密，无需在服务器上安装 OpenSSL 3.5）。
+**Caddy** — 支持自动 SSL 的 Web 服务器，是 nginx 在 SelfSteal 场景下的替代方案（它开箱即用地支持混合加密，无需在服务器上安装 OpenSSL 3.5）。在“附加功能”菜单（主菜单的 `[8]`）中有现成的选项 **[3] Caddy 作为 PQ 伪装（SelfSteal）**：从官方仓库安装 Caddy 2.10+，获取 Let's Encrypt 证书，并配置一个仅在本地 127.0.0.1:8443 监听的伪装服务。
+
+**“附加功能”菜单** — 主菜单的 `[8]` 项（`data/extra_menu.sh`），把次要功能集中到一个子菜单中，让主菜单保持简洁：`[1]` GEOIP 绕过 SYN 限制，`[2]` 限速（按 IPv4 流量整形），`[3]` Caddy 作为 PQ 伪装，`[4]` 附加服务（WARP、AdGuard Home），`[5]` 面板备份与恢复，`[6]` 安全。每个子菜单以独立的 `bash` 进程运行，退出后返回 `[8]`。
+
+**GEOIP 绕过 SYN 限制** — “附加功能”菜单的 `[1]` 项（或 `bash /opt/mtpr-simple/data/rules.sh -geoip`）。来自“自己”国家（`RU,CN,IR,VN,CU,SO,NP,TM,OM,UA`）之外的 IP 连接会先于 SYN 限速规则被放行，不会被误封。会安装 **xtables-addons**、构建 GeoLite2 数据库（`xt_geoip_dl` + `xt_geoip_build`），并把规则插入到 **INPUT** 的最前面；数据库每日更新 — cron 任务 `/etc/cron.daily/xt_geoip`。
+
+**限速（按 IPv4 流量整形）** — “附加功能”菜单的 `[2]` 项（`data/shaping.sh`）。可选的出站流量整形器，通过 `tc` HTB + flower 过滤器实现：整体速度上限 + 每个客户端 IPv4 地址单独的限速。模式：**manual**（手动）、**fixed**（按带宽公式）、**dynamic**（按活跃 IP 数量动态重算）。不影响入站 SYN 修复。
+
+**安全（TLS 指纹与 IP/子网封锁）** — “附加功能”菜单的 `[6]` 项（`data/security.sh`）。显示来自 Telemt 引擎 API 的客户端 TLS 指纹（JA3/JA4），并可通过自己的 nft 表 `inet mtpr_block`（集合 `mtpr_block4`/`mtpr_block6`，drop/reject 动作带计数器）封锁不想要的 **IP 和子网**。名单保存在 `/opt/mtpr-simple/ipblock.list`，重启后自动加载 — 单元 `mtpr-block.service`。
+
+**面板备份与恢复** — “附加功能”菜单的 `[5]` 项（`data/backup_panel.sh`）。把迁移服务器所需的一切（`/etc/telemt`、`/opt/mtpr-simple`、systemd 单元、cron 任务、MTG/MTProtoZig 配置）打成 `tar.gz` 存到 `/root/mtpr-backups/`。恢复时把归档解压到 `/`，执行 `daemon-reload`，并如实报告哪些服务真正 active/enabled。范围：`all` / `telemt` / `fix`。
+
+**附加服务（WARP、AdGuard Home）** — “附加功能”菜单的 `[4]` 项（`data/services_menu.sh`）。安装 **Cloudflare WARP** 客户端（来自官方仓库；会改变路由——需要确认）和 **AdGuard Home**（安装脚本先下载到文件再单独运行，不使用 `curl | sh`；默认占用 53 端口）。
+
+**节点客户端同步** — 服务器菜单的 `[3]` 项（`remote_ctl/node_manager.sh`）。从本地 Telemt 配置（`[access.users]`）读取客户端列表，把远程节点上缺失的客户端补上去；已有的客户端不会被删除或覆盖。修改前会备份 `telemt.toml.bak.<日期>`，出错时自动回滚。
+
+**WEB 代理（Telemt WEB 模式）** — Telemt 菜单中的 `[w]` 项。设置 Telemt WEB 模式（域名、用户、密钥、nginx），可在域名内指定路径（`base_path`，需要 telemt 3.5.8+），启用 bridge 报告，并显示现成的 `tg://webproxy` 链接。配置修改会经过备份和 TOML 校验。
 
 **组合包** — 社区中对将多个代理和工具集成于一个菜单的项目的非正式称呼。
 
