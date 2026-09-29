@@ -30,6 +30,14 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
+# ── Логирование ───────────────────────────────────────────────
+# В этом файле хелперов log_* не было, из-за чего пункт [0]
+# ("Назад в управление нодой") падал с "log_info: command not found".
+log_info() { echo -e "  ${BLUE}[i]${NC} $1"; }
+log_success() { echo -e "  ${GREEN}[✓]${NC} $1"; }
+log_error() { echo -e "  ${RED}[✗]${NC} $1" >&2; }
+log_warning() { echo -e "  ${YELLOW}[!]${NC} $1"; }
+
 # ── Файл для сохранения пути к конфигу (используем общий с main.sh) ──
 CONFIG_PATH_FILE="/opt/mtpr-simple/config_path"
 

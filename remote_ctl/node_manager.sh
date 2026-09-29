@@ -71,8 +71,12 @@ load_server_config() {
     local ip="$1"
     local conf_file="$SERVERS_DIR/$ip.conf"
     [[ ! -f "$conf_file" ]] && return 1
-    source "$conf_file"
-    echo "$USER" "$PORT"
+    # source в подоболочке: файл не должен менять переменные самого
+    # скрипта (раньше он затирал глобальный $USER/$PORT).
+    (
+        . "$conf_file"
+        echo "${NODE_USER:-${USER:-root}}" "${NODE_PORT:-${PORT:-22}}"
+    )
 }
 
 # ── Сохранение конфига ──────────────────────────────────────
@@ -81,17 +85,34 @@ save_server_config() {
     local user="$2"
     local port="$3"
     cat > "$SERVERS_DIR/$ip.conf" <<EOF
+# MEKO Node Manager — конфиг ноды
+NODE_USER="$user"
+NODE_PORT="$port"
+# старые ключи (обратная совместимость)
 USER="$user"
 PORT="$port"
 EOF
 }
 
 # ── Проверка доступа по ключу ──────────────────────────────
+# Возвращает 0 только если SSH реально пускает БЕЗ пароля
+# (BatchMode=yes запрещает интерактив), т.е. ключ уже установлен.
 check_ssh_key() {
     local user="$1"
     local ip="$2"
     local port="${3:-22}"
     ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=2 -o Port="$port" "$user@$ip" "exit" &>/dev/null
+    return $?
+}
+
+# ── Проверка доступности TCP-порта (без аутентификации) ─────
+# Нужна отдельно от check_ssh_key: до добавления сервера ключа ещё
+# нет, и раньше любой живой хост получал ложное "не отвечает по SSH".
+check_tcp() {
+    local ip="$1"
+    local port="$2"
+    local timeout="${3:-5}"
+    timeout "$timeout" bash -c "exec 3<>/dev/tcp/$ip/$port" 2>/dev/null
     return $?
 }
 
@@ -160,10 +181,18 @@ add_server() {
     local user="${parsed[0]}"
     local ip="${parsed[1]}"
 
-    # Проверяем доступность хоста (с таймаутом)
-    log_info "Проверка доступности $ip (порт ${port:-22})..."
-    if ! check_ssh_key "$user" "$ip" "${port:-22}"; then
-        log_warning "Хост $ip не отвечает по SSH (таймаут 5 сек)."
+    # Сначала порт, потом TCP-проверка доступности.
+    # Раньше проверка шла ДО ввода порта и через check_ssh_key: у ещё
+    # не добавленного сервера ключа нет, поэтому живой хост получал
+    # ложное «Хост ... не отвечает по SSH (таймаут 5 сек)».
+    echo -en "  ${BOLD}Введите порт для SSH подключения (по умолчанию ${GREEN}Enter - 22${NC}${BOLD}):${NC} "
+    local port
+    read -r port
+    port=${port:-22}
+
+    log_info "Проверка доступности $ip (порт $port)..."
+    if ! check_tcp "$ip" "$port" 5; then
+        log_warning "Порт $port на $ip недоступен (таймаут 5 сек)."
         echo -en "  ${BOLD}Добавить сервер всё равно? [y/N]:${NC} "
         local force
         read -r force
@@ -185,11 +214,6 @@ add_server() {
             return 0
         fi
     fi
-
-    echo -en "  ${BOLD}Введите порт для SSH подключения (по умолчанию ${GREEN}Enter - 22${NC}${BOLD}):${NC} "
-    local port
-    read -r port
-    port=${port:-22}
 
     ensure_ssh_key
 
@@ -415,7 +439,11 @@ server_submenu() {
                 echo ""
                 local NODE_TELEMT_SCRIPT="$SCRIPT_DIR/telemt1_node.sh"
                 if [ -f "$NODE_TELEMT_SCRIPT" ]; then
-                    exec "$NODE_TELEMT_SCRIPT" "$ip" "$user" "$port"
+                    # НЕ exec: exec подменял процесс, и выход из подменю
+                    # выбрасывал пользователя в шелл. Дочерний запуск
+                    # возвращает управление в это меню.
+                    bash "$NODE_TELEMT_SCRIPT" "$ip" "$user" "$port" || true
+                    continue
                 else
                     log_error "Скрипт $NODE_TELEMT_SCRIPT не найден."
                     read -p "Нажмите Enter для продолжения..."
@@ -445,7 +473,9 @@ server_submenu() {
                 echo ""
                 local NODE_RULES_SCRIPT="$SCRIPT_DIR/rules1_node.sh"
                 if [ -f "$NODE_RULES_SCRIPT" ]; then
-                    exec "$NODE_RULES_SCRIPT" "$ip" "$user" "$port"
+                    # НЕ exec (см. комментарий у пункта [2]).
+                    bash "$NODE_RULES_SCRIPT" "$ip" "$user" "$port" || true
+                    continue
                 else
                     log_error "Скрипт $NODE_RULES_SCRIPT не найден."
                     read -p "Нажмите Enter для продолжения..."
