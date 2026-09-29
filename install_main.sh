@@ -46,7 +46,6 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-if [ -t 1 ]; then clear 2>/dev/null || true; fi
 # ── Шапка ─────────────────────────────────────────────────────
 echo ""
 echo -e "  ${NC}${BOLD}⚙️ УСТАНОВКА${CYAN}${BOLD} MEKOPR ${NC}${BOLD}(РЕЖИМ: ${CYAN}${BOLD}Main${NC}${BOLD}) v0.22${NC}"
