@@ -221,10 +221,11 @@ detect_telemt_advanced() {
             ' "$DETECTED_CONFIG_PATH" 2>/dev/null)
             DETECTED_IP=$(usable_ip "$DETECTED_IP")
         fi
-        DETECTED_TLS_DOMAIN=$(grep -E '^tls_domain[[:space:]]*=' "$DETECTED_CONFIG_PATH" 2>/dev/null | head -1 | awk -F'=' '{print $2}' | tr -d ' "')
+        DETECTED_TLS_DOMAIN=$(grep -E '^tls_domain[[:space:]]*=' "$DETECTED_CONFIG_PATH" 2>/dev/null | head -1 | sed 's/^[^=]*=//' | sed 's/#.*$//' | tr -d ' "')
         
         # Ищем секрет - сначала в секции [access.users], потом во всем файле
-        DETECTED_SECRET=$(sed -n '/^\[access\.users\]/,/^\[/p' "$DETECTED_CONFIG_PATH" 2>/dev/null | grep -E '=' | head -1 | awk -F'=' '{print $2}' | tr -d ' "')
+        # Режем inline-комментарий: "секрет" # пояснение -> "секрет"
+        DETECTED_SECRET=$(sed -n '/^\[access\.users\]/,/^\[/p' "$DETECTED_CONFIG_PATH" 2>/dev/null | grep -E '=' | grep -v '^[[:space:]]*#' | head -1 | sed 's/^[^=]*=//' | sed 's/#.*$//' | tr -d ' "')
         if [ -z "$DETECTED_SECRET" ]; then
             DETECTED_SECRET=$(grep -E '^[[:space:]]*[^#]*[[:space:]]*=' "$DETECTED_CONFIG_PATH" 2>/dev/null | grep -v '^#' | head -1 | awk -F'=' '{print $2}' | tr -d ' "')
         fi
@@ -256,9 +257,12 @@ get_users_list() {
     fi
     
     # Получаем все строки из секции [access.users]
-    sed -n '/^\[access\.users\]/,/^\[/p' "$config_path" 2>/dev/null | grep -E '=' | grep -v '^#' | while IFS='=' read -r name secret; do
-        name=$(echo "$name" | tr -d ' "')
-        secret=$(echo "$secret" | tr -d ' "')
+    # Строки вида: webuser = "<32hex>" # комментарий
+    # Комментарий после секрета ОБЯЗАН быть отрезан: иначе он попадает в
+    # tg://-ссылку, а Telegram режет всё по '#' и теряет FakeTLS-домен.
+    sed -n '/^\[access\.users\]/,/^\[/p' "$config_path" 2>/dev/null | grep -E '=' | grep -v '^[[:space:]]*#' | while IFS='=' read -r name secret; do
+        name=$(printf '%s' "$name" | sed 's/#.*$//' | tr -d ' "')
+        secret=$(printf '%s' "$secret" | sed 's/#.*$//' | tr -d ' "')
         if [ -n "$name" ] && [ -n "$secret" ]; then
             echo "$name:$secret"
         fi
