@@ -16,10 +16,10 @@ listen = "127.0.0.1:9091"
 whitelist = ["127.0.0.1/32"]
 
 [censorship]
-tls_domain = "example.com" # Замените на свой домен
+tls_domain = "example.com"
 
 [access.users]
-hello = "CHANGE_ME_32HEX" # Замените на свой секрет (32 hex-символа)
+hello = "CHANGE_ME_32HEX"
 
 # ========== MTProto ==========
 [[server.listeners]]
@@ -37,11 +37,11 @@ web_trusted_proxy_cidrs = ["127.0.0.1/32"]
 
 [web]
 enabled = true
-carrier = "https-lanes"
+carrier = "https"
 
 [[web.vhosts]]
-host = "example.com"  # замените на свой домен
-public_addr = "203.0.113.10:443"   # замените на реальный IP:порт
+host = "example.com"
+public_addr = "203.0.113.10:443"
 # Необязательно: путь WEB внутри домена (telemt 3.5.8+). Пусто — корень.
 # base_path = "app/sync"
 

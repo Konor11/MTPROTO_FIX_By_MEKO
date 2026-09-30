@@ -1902,6 +1902,288 @@ EOF
     return 0
 }
 
+# ── WEB: слияние конфига вместо полной замены ────────────────────────
+# Раньше WEB-установка переписывала telemt.toml целиком шаблоном, теряя
+# пользователей, client_mss/mss_bulk/synlimit и любые свои настройки.
+# Теперь вырезаем только WEB-секции и WEB-listener, всё остальное сохраняем.
+# Коды: 0 ок, 1 результат невалиден, 2 исходник невалиден/не читается —
+# в обоих случаях вызывающий обязан оставить конфиг как есть.
+_web_merge_conf() {
+    local cfg="$1" webconf="$2" whost="$3" wip="$4" wsec="$5" wuser="$6"
+    python3 - "$cfg" "$webconf" "$whost" "$wip" "$wsec" "$wuser" <<'WEBMERGE_EOF'
+import re, sys, tomllib
+
+cfg_path, web_path, whost, wip, wsec, wuser = sys.argv[1:7]
+try:
+    raw = open(cfg_path, encoding='utf-8').read()
+except OSError as e:
+    print('ERR: не читается %s: %s' % (cfg_path, e), file=sys.stderr); sys.exit(2)
+web = open(web_path, encoding='utf-8').read()
+
+# Исходник обязан быть валидным TOML: иначе мы чиним не то, и откат
+# восстановит битый конфиг. Отказ до любых изменений.
+try:
+    tomllib.loads(raw)
+except Exception as e:
+    print('ERR: исходный конфиг невалиден (%s); сначала почините его' % e, file=sys.stderr)
+    sys.exit(2)
+
+# ── 1. Разбор исходного конфига на "блоки" ───────────────────────────
+# Блок = одна секция [x.y] со всеми своими строками, включая вложенные
+# [x.y.z]. Массивы [[x]] разбиваем по каждому элементу отдельно.
+lines = raw.splitlines()
+blocks = []          # список (header, [lines])
+cur = None
+for ln in lines:
+    t = ln.strip()
+    if re.match(r'^\[+[^\[\]]+\]+$', t):
+        cur = {'hdr': t, 'lines': [ln]}
+        blocks.append(cur)
+    else:
+        if cur is None:
+            blocks.append({'hdr': None, 'lines': [ln]})   # преамбула
+        else:
+            cur['lines'].append(ln)
+
+def base_name(hdr):
+    """'[web.vhosts]' -> 'web.vhosts'; '[[server.listeners]]' -> 'server.listeners'"""
+    m = re.match(r'^\[+\s*([^\]]+?)\s*\]+$', hdr)
+    return m.group(1).strip() if m else None
+
+def is_web(name):
+    return name == 'web' or name.startswith('web.') or name == 'web'
+
+def is_web_listener(b):
+    """[[server.listeners]] с transport = "web" — наш WEB-listener"""
+    if base_name(b['hdr']) != 'server.listeners':
+        return False
+    return any(re.match(r'^\s*transport\s*=\s*"web"', l) for l in b['lines'])
+
+# ── 2. Что вырезаем ──────────────────────────────────────────────────
+keep, dropped = [], []
+for b in blocks:
+    name = base_name(b['hdr'])
+    drop = False
+    if name and is_web(name):
+        drop = True
+    elif is_web_listener(b):
+        drop = True
+    (dropped if drop else keep).append(b)
+
+# ── 3. Правки в оставшемся ──────────────────────────────────────────
+out = []
+for b in keep:
+    name = base_name(b['hdr'])
+    if name == 'censorship':
+        # tls_domain есть? обновляем, иначе дописываем в конец секции
+        found = False
+        for ln in b['lines']:
+            m = re.match(r'^\s*(#\s*)?tls_domain\s*=\s*"[^"]*"(.*)$', ln)
+            if m:
+                if m.group(1):
+                    # строка была закомментирована — раскомментируем её,
+                    # иначе tls_domain останется пустым и telemt не стартует
+                    out.append('tls_domain = "%s"%s' % (whost, m.group(2)))
+                else:
+                    out.append('tls_domain = "%s"%s' % (whost, m.group(2)))
+                found = True
+            else:
+                out.append(ln)
+        if not found:
+            out.append('tls_domain = "%s"' % whost)
+    else:
+        out.extend(b['lines'])
+
+# ── 4. Пользователь WEB ─────────────────────────────────────────────
+# Ищем [access.users]; если пользователя нет — дописываем.
+users_idx = None
+users_end = len(out)
+for i, ln in enumerate(out):
+    if base_name(('[' + re.match(r'^\s*\[?\s*([^\]]+?)\s*\]?$', ln.strip()).group(1) + ']')
+                 if re.match(r'^\s*\[?\s*[^\]]+?\s*\]?\s*$', ln.strip()) and base_name(ln.strip()) else '') == 'access.users':
+        users_idx = i
+        continue
+    if users_idx is not None and re.match(r'^\s*\[', ln) and not re.match(r'^\s*\[\[?access\.users', ln):
+        users_end = i
+        break
+
+existing = None
+if users_idx is not None:
+    for ln in out[users_idx+1:users_end]:
+        m = re.match(r'^\s*([A-Za-z0-9_.-]+)\s*=\s*"([0-9a-fA-F]+)"', ln)
+        if m and m.group(1) == wuser:
+            existing = m.group(2)
+            break
+
+if existing is None:
+    if users_idx is not None:
+        out.insert(users_end, '%s = "%s"' % (wuser, wsec))
+    else:
+        out.extend(['', '[access.users]', '%s = "%s"' % (wuser, wsec)])
+
+# ── 5. Дописываем WEB-конфиг, вырезав из него дубли ──────────────────
+weblines = web.splitlines()
+# Из шаблона берём только WEB-часть: [web] ... и [[server.listeners]] c web
+keepw, inweb = [], False
+for ln in weblines:
+    t = ln.strip()
+    if re.match(r'^\[\[?web', t):
+        inweb = True
+        keepw.append(ln); continue
+    if re.match(r'^\[+[^\[\]]+\]+$', t) and not re.match(r'^\[\[?web', t):
+        inweb = False
+    if inweb:
+        keepw.append(ln)
+
+# listener для web
+weblist = [l for l in weblines if l.strip() == 'transport = "web"']
+if not weblist:
+    print('ERR: в web-конфиге нет WEB-listener', file=sys.stderr)
+    sys.exit(2)
+
+# base_path из шаблона, если раскомментирован
+bp = None
+for ln in keepw:
+    m = re.match(r'^\s*base_path\s*=\s*"([^"]+)"', ln)
+    if m:
+        bp = m.group(1)
+
+block = []
+block.append('[[server.listeners]]')
+block.append('ip = "127.0.0.1"')
+block.append('port = 18080')
+block.append('transport = "web"')
+block.append('proxy_protocol = false')
+block.append('web_client_ip_source = "x_forwarded_for"')
+block.append('web_trusted_proxy_cidrs = ["127.0.0.1/32"]')
+block.append('')
+for ln in keepw:
+    if re.match(r'^\s*base_path', ln):
+        continue
+    block.append(ln)
+if bp:
+    # вставляем base_path в первый [[web.vhosts]]
+    for i, ln in enumerate(block):
+        if re.match(r'^\s*\[\[web\.vhosts\]\]\s*$', ln):
+            j = i + 1
+            while j < len(block) and not block[j].strip():
+                j += 1
+            block.insert(j, 'base_path = "%s"' % bp)
+            break
+
+# без хвостовых пустых строк в блоке — иначе каждый прогон добавляет
+# ещё одну и повторная установка не идемпотентна
+while block and not block[-1].strip():
+    block.pop()
+while out and not out[-1].strip():
+    out.pop()
+out.extend([''])
+out.extend(block)
+
+text = '\n'.join(out).rstrip('\n') + '\n'
+
+# ── 6. Валидация ─────────────────────────────────────────────────────
+try:
+    d = tomllib.loads(text)
+except Exception as e:
+    print('TOML ERROR: %s' % e, file=sys.stderr)
+    sys.exit(1)
+
+# Проверки, которые важны для WEB
+v = d.get('web', {})
+vhosts = v.get('vhosts') or []
+if not vhosts:
+    print('ERR: нет [[web.vhosts]]', file=sys.stderr); sys.exit(1)
+vh = vhosts[0]
+if vh.get('host') != whost:
+    print('ERR: host mismatch %r != %r' % (vh.get('host'), whost), file=sys.stderr); sys.exit(1)
+if vh.get('public_addr') != '%s:443' % wip:
+    print('ERR: public_addr mismatch %r' % vh.get('public_addr'), file=sys.stderr); sys.exit(1)
+prof = (vh.get('profiles') or [{}])[0]
+if prof.get('user') != wuser:
+    print('ERR: profile user %r != %r' % (prof.get('user'), wuser), file=sys.stderr); sys.exit(1)
+if wuser not in d.get('access', {}).get('users', {}):
+    print('ERR: пользователя нет в access.users', file=sys.stderr); sys.exit(1)
+if not any(b.get('transport') == 'web' for b in d.get('server', {}).get('listeners', [])):
+    print('ERR: нет WEB-listener', file=sys.stderr); sys.exit(1)
+
+sys.stdout.write(text)
+sys.stderr.write('OK: секций сохранено=%d, вырезано=%d, пользователей=%d\n' % (
+    len(keep), len(dropped), len(d['access']['users'])))
+WEBMERGE_EOF
+}
+
+# _web_strip_conf <cfg> — убрать WEB-секции и WEB-listener. Коды те же.
+_web_strip_conf() {
+    local cfg="$1"
+    python3 - "$cfg" <<'WEBSTRIP_EOF'
+import re, sys, tomllib
+
+cfg = sys.argv[1]
+try:
+    raw = open(cfg, encoding='utf-8').read()
+except OSError as e:
+    print('ERR: не читается %s: %s' % (cfg, e), file=sys.stderr); sys.exit(2)
+try:
+    tomllib.loads(raw)
+except Exception as e:
+    print('ERR: конфиг невалиден (%s)' % e, file=sys.stderr); sys.exit(2)
+
+lines = raw.splitlines()
+blocks, cur = [], None
+for ln in lines:
+    t = ln.strip()
+    if re.match(r'^\[+[^\[\]]+\]+$', t):
+        cur = {'hdr': t, 'lines': [ln]}; blocks.append(cur)
+    else:
+        if cur is None:
+            blocks.append({'hdr': None, 'lines': [ln]})
+        else:
+            cur['lines'].append(ln)
+
+def base(h):
+    m = re.match(r'^\[+\s*([^\]]+?)\s*\]+$', h or '')
+    return m.group(1).strip() if m else None
+
+def is_web_listener(b):
+    return base(b['hdr']) == 'server.listeners' and \
+           any(re.match(r'^\s*transport\s*=\s*"web"', l) for l in b['lines'])
+
+out, dropped = [], []
+for b in blocks:
+    n = base(b['hdr'])
+    if (n == 'web' or (n and n.startswith('web.')) or is_web_listener(b)):
+        dropped.append(n or '?')
+    else:
+        out.extend(b['lines'])
+
+# Выкидываем осиротевшие пустые строки подряд (больше двух)
+res = []
+for ln in out:
+    if not ln.strip() and res and not res[-1].strip():
+        continue
+    res.append(ln)
+while res and not res[-1].strip():
+    res.pop()
+
+text = '\n'.join(res).rstrip('\n') + '\n'
+try:
+    d = tomllib.loads(text)
+except Exception as e:
+    print('TOML ERROR после удаления: %s' % e, file=sys.stderr); sys.exit(1)
+
+# Проверяем, что WEB действительно ушёл, а обычный прокси цел
+if 'web' in d or any(l.get('transport') == 'web' for l in d.get('server', {}).get('listeners', [])):
+    print('ERR: WEB-секции остались', file=sys.stderr); sys.exit(1)
+if not d.get('server', {}).get('listeners'):
+    print('ERR: не осталось ни одного listener — не трогаем', file=sys.stderr); sys.exit(1)
+
+sys.stdout.write(text)
+sys.stderr.write('OK: вырезано блоков=%d, секций web осталось=0, listener\'ов=%d\n' % (
+    len(dropped), len(d['server']['listeners'])))
+WEBSTRIP_EOF
+}
+
 # ── Меню: установка WEB-прокси ───────────────────────────────
 # ── WEB-прокси: меню (установка, путь, отчёты, ссылка) ────────
 web_proxy_menu() {
@@ -1924,6 +2206,7 @@ web_proxy_menu() {
         echo -e "  ${CYAN}[p]${NC}  ${BOLD}Путь WEB внутри домена${NC}"
         echo -e "  ${CYAN}[r]${NC}  ${BOLD}Отчёты bridge-страницы: вкл/выкл${NC}"
         echo -e "  ${CYAN}[s]${NC}  ${BOLD}Показать WEB-ссылку${NC}"
+        echo -e "  ${RED}[x]${NC}  ${BOLD}Удалить WEB-прокси (nginx, certbot, сертификаты)${NC}"
         echo ""
         echo -e "  ${RED}[0]${NC}  ${BOLD}Назад${NC}"
         echo ""
@@ -1935,6 +2218,7 @@ web_proxy_menu() {
             p|P) _web_path_menu "$cfg" || true ;;
             r|R) _web_reports_menu "$cfg" || true ;;
             s|S) _web_show_link "$cfg" || true ;;
+            x|X) _web_proxy_remove || true ;;
             0 | "") return 0 ;;
             *) echo "  Неверный выбор"; sleep 0.1 ;;
         esac
@@ -1994,8 +2278,8 @@ _web_proxy_install() {
     fi
 
     echo ""
-    echo -e "  ${RED}${BOLD}ВНИМАНИЕ:${NC} WEB-конфиг ЗАМЕНЯЕТ ${cfg} ЦЕЛИКОМ."
-    echo -e "  ${RED}Существующие пользователи и настройки будут потеряны.${NC}"
+    echo -e "  ${DIM}Существующие пользователи, client_mss/mss_bulk/synlimit и прочие${NC}"
+    echo -e "  ${DIM}настройки будут СОХРАНЕНЫ — WEB-секции добавляются, а не заменяют всё.${NC}"
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local confirm=""
     { read -r confirm </dev/tty; } 2>/dev/null || true
@@ -2024,49 +2308,83 @@ _web_proxy_install() {
         return 1
     fi
 
-    local content=""
     # Подстановка ПО КЛЮЧАМ, а не по литералам: правки data/webconfig.txt
     # не должны превращать подстановку в тихий no-op.
     local esc_host esc_ip esc_secret
     esc_host=$(printf '%s' "$web_host" | sed 's/[&#\\]/\\&/g')
     esc_ip=$(printf '%s' "$web_ip" | sed 's/[&#\\]/\\&/g')
     esc_secret=$(printf '%s' "$web_secret" | sed 's/[&#\\]/\\&/g')
-    content=$(sed -E \
+    sed -E \
         -e "s#^([[:space:]]*tls_domain[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_host\"#" \
         -e "s#^([[:space:]]*host[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_host\"#" \
         -e "s#^([[:space:]]*public_addr[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_ip:443\"#" \
         -e "s#^([[:space:]]*hello[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_secret\"#" \
-        "$tpl")
-    # Проверяем, что подстановка реально произошла (иначе тихий no-op)
-    if ! grep -qF -- "$web_host" <<< "$content" \
-       || ! grep -qF -- "$web_ip:443" <<< "$content" \
-       || ! grep -qF -- "$web_secret" <<< "$content" \
-       || grep -qF -- 'CHANGE_ME_32HEX' <<< "$content"; then
+        "$tpl" > "$tpl.subst"
+    if ! grep -qF -- "$web_host" < "$tpl.subst" \
+       || ! grep -qF -- "$web_ip:443" < "$tpl.subst" \
+       || grep -qF -- 'CHANGE_ME_32HEX' < "$tpl.subst"; then
         echo -e "  ${RED}[x]${NC} Не удалось подставить значения в WEB-конфиг"
         echo -e "  ${DIM}Проверьте ключи tls_domain/host/public_addr/access.users в data/webconfig.txt${NC}"
-        rm -f "$tpl"
+        rm -f "$tpl" "$tpl.subst"
         return 1
     fi
     if [ "$web_user" != "hello" ]; then
-        content="${content//hello = /$web_user = }"
-        content="${content//links_show = \[\"hello\"\]/links_show = [\"$web_user\"]}"
-        content="${content//user = \"hello\"/user = \"$web_user\"}"
+        sed -i -e "s/^hello\s*=/$web_user = /" \
+               -e "s#links_show = \[\"hello\"#links_show = [\"$web_user\"#" \
+               -e "s/^user = \"hello\"/user = \"$web_user\"/" "$tpl.subst"
     fi
-    printf '%s\n' "$content" > "$cfg"
-    rm -f "$tpl"
 
-    local vrc=0
-    _verify_toml "$cfg" || vrc=$?
-    if [ "$vrc" -eq 1 ]; then
-        echo -e "  ${RED}[x]${NC} TOML невалиден — восстанавливаю бэкап"
-        cp -a "$backup" "$cfg" 2>/dev/null || true
+    # Слияние: сохраняем существующий конфиг, добавляем WEB-секции.
+    local newcfg="${cfg}.new.$$"
+    local mrc=0
+    _web_merge_conf "$cfg" "$tpl.subst" "$web_host" "$web_ip" "$web_secret" "$web_user" > "$newcfg" || mrc=$?
+    rm -f "$tpl" "$tpl.subst"
+    if [ "$mrc" -ne 0 ] || [ ! -s "$newcfg" ]; then
+        echo -e "  ${RED}[x]${NC} Не удалось собрать WEB-конфиг (код $mrc) — старый конфиг не тронут"
+        echo -e "  ${DIM}Бэкап: ${backup}${NC}"
+        rm -f "$newcfg"
         return 1
     fi
+
+    # Показываем, что именно изменится, до записи.
+    echo ""
+    echo -e "  ${BOLD}Будет изменено:${NC}"
+    diff -u "$cfg" "$newcfg" 2>/dev/null | sed -n '3,$p' | sed 's/^/    /' | head -60
+    echo ""
+
+    local vrc=0
+    _verify_toml "$newcfg" || vrc=$?
+    if [ "$vrc" -eq 1 ]; then
+        echo -e "  ${RED}[x]${NC} TOML невалиден — запись отменена, конфиг не тронут"
+        rm -f "$newcfg"
+        return 1
+    fi
+    [ "$vrc" -eq 2 ] && echo -e "  ${YELLOW}[!]${NC} Проверка TOML недоступна — полагаемся на проверку в _web_merge_conf${NC}"
+
+    echo -en "  ${BOLD}Записать изменения в ${cfg}? [y/N]:${NC} "
+    local wconfirm=""
+    { read -r wconfirm </dev/tty; } 2>/dev/null || true
+    case "$wconfirm" in
+        y|Y|yes|YES) : ;;
+        *) echo -e "  ${GRAY}Отменено, конфиг не изменён${NC}"; rm -f "$newcfg"; return 0 ;;
+    esac
+
+    if ! cp -f "$newcfg" "$cfg" 2>/dev/null; then
+        echo -e "  ${RED}[x]${NC} Не удалось записать конфиг"
+        rm -f "$newcfg"
+        return 1
+    fi
+    rm -f "$newcfg"
+    echo -e "  ${GREEN}[✓]${NC} Конфиг обновлён, прежние настройки сохранены"
 
     if systemctl restart telemt >/dev/null 2>&1 && systemctl is-active --quiet telemt 2>/dev/null; then
         echo -e "  ${GREEN}[✓]${NC} telemt перезапущен и активен"
     else
-        echo -e "  ${YELLOW}[!]${NC} Не удалось подтвердить активность telemt"
+        echo -e "  ${RED}[x]${NC} telemt не поднялся — откатываю"
+        cp -a "$backup" "$cfg" 2>/dev/null || true
+        systemctl restart telemt >/dev/null 2>&1 || true
+        echo -e "  ${DIM}Восстановлено из: ${backup}${NC}"
+        return 1
     fi
 
     # nginx ставим ПОСЛЕ перезапуска telemt: в WEB-режиме конфиг уводит
@@ -2097,6 +2415,145 @@ _web_proxy_install() {
     echo -e "  ${CYAN}$(_web_make_link "$web_host" "$_wpath" "$web_secret" "$_dd")${NC}"
     echo ""
     echo -e "  ${DIM}Откройте https://${web_host} в браузере.${NC}"
+    return 0
+}
+
+# ── WEB: удаление (nginx, certbot, сертификаты, секции конфига) ─────
+_web_remove_nginx() {
+    local web_host="$1"
+    echo -e "  ${DIM}Остановка nginx...${NC}"
+    systemctl stop nginx >/dev/null 2>&1 || true
+    pkill -x nginx >/dev/null 2>&1 || true
+
+    # Конфиг, который ставил WEB-прокси
+    local conf="/etc/nginx/sites-available/default"
+    if [ -f "$conf" ] && grep -q "telemt_web" "$conf" 2>/dev/null; then
+        rm -f "$conf" /etc/nginx/sites-enabled/default
+        echo -e "  ${GREEN}[✓]${NC} конфиг nginx для WEB удалён"
+    elif [ -f "$conf" ]; then
+        echo -e "  ${YELLOW}[!]${NC} ${conf} не похож на WEB-конфиг — оставляю как есть"
+    fi
+
+    # Сертификаты и renew-hook этого домена
+    if [ -n "$web_host" ] && [ -d "/etc/letsencrypt/renewal" ]; then
+        local rn
+        for rn in "/etc/letsencrypt/renewal/${web_host}.conf"; do
+            [ -f "$rn" ] || continue
+            rm -f "$rn"
+            echo -e "  ${GREEN}[✓]${NC} renew-конфиг certbot удалён: ${web_host}"
+        done
+        if [ -d "/etc/letsencrypt/live/${web_host}" ] || [ -d "/etc/letsencrypt/archive/${web_host}" ]; then
+            certbot delete --cert-name "$web_host" --non-interactive >/dev/null 2>&1 \
+                && echo -e "  ${GREEN}[✓]${NC} сертификат ${web_host} удалён" \
+                || echo -e "  ${YELLOW}[!]${NC} Не удалось удалить сертификат ${web_host} через certbot"
+        fi
+    fi
+
+    # Пакеты. Удаляем nginx/certbot только если они ставились для WEB и
+    # больше ничего не слушает — иначе можно уронить чужой сайт.
+    local _keep=0
+    if systemctl is-enabled nginx >/dev/null 2>&1; then _keep=1; fi
+    if [ -d /etc/nginx/sites-enabled ] && ls /etc/nginx/sites-enabled/* >/dev/null 2>&1; then
+        echo -e "  ${YELLOW}[!]${NC} В sites-enabled остались другие сайты — nginx НЕ удаляю"
+        _keep=1
+    fi
+    if [ "$_keep" -eq 0 ]; then
+        if command -v apt-get >/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq nginx nginx-common nginx-core \
+                python3-certbot-nginx certbot >/dev/null 2>&1 || true
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf remove -y -q nginx certbot python3-certbot-nginx >/dev/null 2>&1 || true
+        elif command -v yum >/dev/null 2>&1; then
+            yum remove -y -q nginx certbot python3-certbot-nginx >/dev/null 2>&1 || true
+        fi
+        if command -v nginx >/dev/null 2>&1; then
+            echo -e "  ${YELLOW}[!]${NC} nginx всё ещё установлен — возможно, зависимость другого пакета"
+        else
+            echo -e "  ${GREEN}[✓]${NC} nginx и certbot удалены"
+        fi
+    fi
+    return 0
+}
+
+# Удаление WEB-прокси целиком: конфиг telemt возвращается к обычному MTProto.
+_web_proxy_remove() {
+    local cfg=""
+    cfg=$(get_config_path)
+    if [ -z "$cfg" ] || [ ! -f "$cfg" ]; then
+        echo -e "  ${RED}[x]${NC} Конфиг telemt не найден"
+        return 1
+    fi
+
+    local host path user mode secret sideband
+    IFS='|' read -r host path user mode secret sideband < <(_web_parse_cfg "$cfg")
+    if [ -z "$host" ]; then
+        echo -e "  ${YELLOW}[!]${NC} WEB-секций в конфиге нет — нечего удалять"
+        return 1
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Удаление WEB-прокси${NC}"
+    echo -e "  ${DIM}Домен: ${host}${NC}"
+    echo ""
+    echo -e "  ${YELLOW}[!]${NC} Будут удалены: WEB-секции конфига, WEB-listener 127.0.0.1:18080,"
+    echo -e "  ${YELLOW}[!]${NC} nginx, certbot и сертификаты для ${host}."
+    echo -e "  ${YELLOW}[!]${NC} Пользователи и client_mss/mss_bulk/synlimit ОСТАЮТСЯ."
+    echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
+    local confirm=""
+    { read -r confirm </dev/tty; } 2>/dev/null || true
+    case "$confirm" in y|Y|yes|YES) : ;; *) echo -e "  ${GRAY}Отменено${NC}"; return 0 ;; esac
+
+    local backup="${cfg}.bak.$(date +%Y%m%d-%H%M%S)"
+    if ! cp -a "$cfg" "$backup" 2>/dev/null; then
+        echo -e "  ${RED}[x]${NC} Не удалось создать бэкап $backup"
+        return 1
+    fi
+    echo -e "  ${DIM}Бэкап: ${backup}${NC}"
+
+    local newcfg="${cfg}.new.$$"
+    local rrc=0
+    _web_strip_conf "$cfg" > "$newcfg" || rrc=$?
+    if [ "$rrc" -ne 0 ] || [ ! -s "$newcfg" ]; then
+        echo -e "  ${RED}[x]${NC} Не удалось очистить конфиг (код $rrc) — ничего не изменено"
+        rm -f "$newcfg"
+        return 1
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Будет изменено в ${cfg}:${NC}"
+    diff -u "$cfg" "$newcfg" 2>/dev/null | sed -n '3,$p' | sed 's/^/    /' | head -60
+    echo ""
+
+    echo -en "  ${BOLD}Применить? [y/N]:${NC} "
+    local wconfirm=""
+    { read -r wconfirm </dev/tty; } 2>/dev/null || true
+    case "$wconfirm" in
+        y|Y|yes|YES) : ;;
+        *) echo -e "  ${GRAY}Отменено${NC}"; rm -f "$newcfg"; return 0 ;;
+    esac
+
+    if ! cp -f "$newcfg" "$cfg" 2>/dev/null; then
+        echo -e "  ${RED}[x]${NC} Не удалось записать конфиг"
+        rm -f "$newcfg"
+        return 1
+    fi
+    rm -f "$newcfg"
+    echo -e "  ${GREEN}[✓]${NC} WEB-секции удалены из конфига"
+
+    if systemctl restart telemt >/dev/null 2>&1 && systemctl is-active --quiet telemt 2>/dev/null; then
+        echo -e "  ${GREEN}[✓]${NC} telemt перезапущен и активен"
+    else
+        echo -e "  ${RED}[x]${NC} telemt не поднялся — откатываю"
+        cp -a "$backup" "$cfg" 2>/dev/null || true
+        systemctl restart telemt >/dev/null 2>&1 || true
+        echo -e "  ${DIM}Восстановлено из: ${backup}${NC}"
+        return 1
+    fi
+
+    _web_remove_nginx "$host"
+    echo ""
+    echo -e "  ${GREEN}[✓]${NC} WEB-прокси удалён, telemt вернулся к обычному MTProto"
+    echo -e "  ${DIM}Бэкап конфига: ${backup}${NC}"
     return 0
 }
 
