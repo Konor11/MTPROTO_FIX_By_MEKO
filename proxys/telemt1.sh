@@ -1991,14 +1991,6 @@ _web_proxy_install() {
         return 1
     fi
 
-    if [ "$do_nginx" = true ]; then
-        if ! _web_install_nginx "$web_host"; then
-            echo -e "  ${RED}[x]${NC} Настройка nginx не удалась — конфиг telemt не изменён"
-            rm -f "$tpl"
-            return 1
-        fi
-    fi
-
     local content=""
     # Подстановка ПО КЛЮЧАМ, а не по литералам: правки data/webconfig.txt
     # не должны превращать подстановку в тихий no-op.
@@ -2042,6 +2034,26 @@ _web_proxy_install() {
         echo -e "  ${GREEN}[✓]${NC} telemt перезапущен и активен"
     else
         echo -e "  ${YELLOW}[!]${NC} Не удалось подтвердить активность telemt"
+    fi
+
+    # nginx ставим ПОСЛЕ перезапуска telemt: в WEB-режиме конфиг уводит
+    # MTProto с 443 на 9443, и только после этого 443 освобождается под nginx.
+    # При обратном порядке restart nginx падает с EADDRINUSE, и установка
+    # обрывается, не записав конфиг вовсе.
+    if [ "$do_nginx" = true ]; then
+        local _still443=""
+        _still443=$(ss -tlnH 2>/dev/null | grep ':443 ' || true)
+        if [ -n "$_still443" ]; then
+            echo -e "  ${YELLOW}[!]${NC} Порт 443 всё ещё занят после рестарта telemt:"
+            echo -e "  ${DIM}${_still443}${NC}"
+            echo -e "  ${YELLOW}[!]${NC} Остановите процесс и запустите установку заново${NC}"
+        fi
+        if ! _web_install_nginx "$web_host"; then
+            echo -e "  ${RED}[x]${NC} Настройка nginx не удалась"
+            echo -e "  ${DIM}Конфиг telemt уже записан. Подробности: journalctl -u nginx -n 30${NC}"
+            rm -f "$tpl"
+            return 1
+        fi
     fi
 
     local _dd=0 _wpath="" _wh="" _wu="" _wm="" _ws="" _wsb=""
