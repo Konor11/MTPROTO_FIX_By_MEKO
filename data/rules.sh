@@ -932,15 +932,15 @@ NFT_WRAPPER_EOF
         local NFT_RULES_TEMPLATE="/opt/mtpr-simple/mtpr-synfix-nft.rules.tmpl"
         if [ "$FIX_TYPE" = "docker_smart" ]; then
             cat > "$NFT_RULES_TEMPLATE" << 'SMART_RULES_EOF'
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \"ios_accept\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_other6 { ip6 saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept6\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn counter reject with tcp reset comment \"other_reject\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \"ios_accept\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn meter mtpr_other6 { ip6 saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept6\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn counter reject with tcp reset comment \"other_reject\""
 SMART_RULES_EOF
         else
             cat > "$NFT_RULES_TEMPLATE" << 'CLASSIC_RULES_EOF'
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_classic { ip saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \"classic_drop\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_classic6 { ip6 saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \"classic_drop6\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn meter mtpr_classic { ip saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \"classic_drop\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn meter mtpr_classic6 { ip6 saddr timeout 60s limit rate 1/second burst 1 packets } counter drop comment \"classic_drop6\""
 CLASSIC_RULES_EOF
         fi
 
@@ -1170,10 +1170,10 @@ NFT_WRAPPER_EOF
 
     local NFT_RULES_TEMPLATE="/opt/mtpr-simple/mtpr-synfix-nft.rules.tmpl"
     cat > "$NFT_RULES_TEMPLATE" << 'SMART_RULES_EOF'
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \"ios_accept\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn meter mtpr_other6 { ip6 saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept6\""
-nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & syn == syn counter reject with tcp reset comment \"other_reject\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000 counter accept comment \"ios_accept\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn meter mtpr_other { ip saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn meter mtpr_other6 { ip6 saddr timeout 60s limit rate 54/minute burst 1 packets } counter accept comment \"other_accept6\""
+nft "add rule inet mtpr_synfix input tcp dport PORT_HERE tcp flags & (syn | ack) == syn counter reject with tcp reset comment \"other_reject\""
 SMART_RULES_EOF
 
     # Рендерим шаблон отдельно на КАЖДЫЙ порт (не in-place),
