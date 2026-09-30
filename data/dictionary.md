@@ -8,13 +8,13 @@
 </a>
 
 ---
-[![Latest Release](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/network/members) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/pulls)
+[![Latest Release](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/network/members) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/pulls)
 [![Telegram](https://telegram-badge.vercel.app/api/telegram-badge?channelId=@meko_mtprotofix)](https://t.me/meko_mtprotofix)
 
 </div>
 
 <p align="center">
-  · <a href="#Быстрый-старт">Установка в 1️⃣ клик</a> · <a href="#Как-работает-фикс">Как работает🔧</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO">Вернуться на главную страницу</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.en.md">English</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.zh.md">中文词典</a> ·
+  · <a href="#Быстрый-старт">Установка в 1️⃣ клик</a> · <a href="#Как-работает-фикс">Как работает🔧</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO">Вернуться на главную страницу</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.en.md">English</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.zh.md">中文词典</a> ·
 </p>
 
 <p align="center">
@@ -86,7 +86,7 @@ _версия **V3** используется по умолчанию и рек�
 
 
 
-_Полные правила IPTABLES,NFTABLES, настройки zapret2 прописаны в [rules.sh](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/rules.sh)_
+_Полные правила IPTABLES,NFTABLES, настройки zapret2 прописаны в [rules.sh](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/rules.sh)_
 
 **SYN FIX / SYN Limit** — ограничение количества входящих SYN-пакетов с одного IP в секунду.
 
@@ -259,4 +259,4 @@ _Полные правила IPTABLES,NFTABLES, настройки zapret2 пр�
 
 
 
-· <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO">Вернуться на главну страницу</a> ·
+· <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO">Вернуться на главну страницу</a> ·

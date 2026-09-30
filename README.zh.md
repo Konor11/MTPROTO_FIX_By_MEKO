@@ -6,13 +6,13 @@
 <img width="300" height="300" alt="logo" src="https://github.com/user-attachments/assets/8decca32-f96a-4b00-9e6c-1bf16bf94d33" />
 
 ---
-[![最新发布](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/releases/latest) [![许可证: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/network/members) [![PRs 欢迎](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/pulls)
+[![最新发布](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/releases/latest) [![许可证: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/network/members) [![PRs 欢迎](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/pulls)
 [![Telegram](https://telegram-badge.vercel.app/api/telegram-badge?channelId=@meko_mtprotofix)](https://t.me/meko_mtprotofix)
 
 </div>
 
 <p align="center">
-  · <a href="#快速开始">一键安装</a> · <a href="#修复原理">工作原理🔧</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">给小白看的文档与词典</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.md">Русский</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.en.md">English</a> ·
+  · <a href="#快速开始">一键安装</a> · <a href="#修复原理">工作原理🔧</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">给小白看的文档与词典</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.md">Русский</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.en.md">English</a> ·
 <p align="center">
   · <a href="#可能的问题为什么可能不工作">常见问题❓</a> 
   
@@ -26,9 +26,9 @@
 安装、更新、回滚、配置、修改配置、查看日志、安装和使用面板、获取连接链接——**无需输入任何命令**。
 同时还能完成 VPN 面板/节点所需的所有功能。
 
-⭐️ _我们的某个修复方案 [旧版 V2](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом) 已被 TELEMT 和 Mtproto zig 采用_ ⭐️
+⭐️ _我们的某个修复方案 [旧版 V2](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом) 已被 TELEMT 和 Mtproto zig 采用_ ⭐️
 
-_MEKO 目前使用 [更精确的 V3 版本](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом)_
+_MEKO 目前使用 [更精确的 V3 版本](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом)_
 </div>
 
 ---
@@ -79,13 +79,13 @@ _MEKO 目前使用 [更精确的 V3 版本](https://github.com/Mekotofeuka/MTPRO
 **注意：本脚本收费，价格：给仓库点一个 ⭐**
 
 1. **安装/更新我们的脚本**：
-<pre><code>curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash</code></pre>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash</code></pre>
 2. **安装标准 Telemt**，或 "**MTPROTO.zig**" 或 **MTG**
    > （所有代理均可通过脚本菜单安装，无需提前在服务器上安装，且安装顺序无关紧要——先代理后修复或先修复后代理均可）
 4. 在主菜单中按 **[1] 安装 SYN FIX** 应用修复
 5. 按 **[5]** 禁用 Telemt 配置中的内置 MSS 和 SYN（如果之前已添加到配置中）
 6. 通过菜单中的 **[7]** 按钮或机器人 **@Sni_checker_bot** 检查 **SNI**——必须选择显示 🟢 **标记：无** 的域名，否则 iOS 用户会遇到问题。
-7. 如果使用 SelfSteal，请确保服务器安装 **OpenSSL 3.5** 或更高版本——否则同样会出现 iOS 问题。如果无法安装 **OpenSSL 3.5+**，则改用任何显示“🟢 **标记：无**”的流行域名替代 SelfSteal。替代方案详见[文档](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md)。
+7. 如果使用 SelfSteal，请确保服务器安装 **OpenSSL 3.5** 或更高版本——否则同样会出现 iOS 问题。如果无法安装 **OpenSSL 3.5+**，则改用任何显示“🟢 **标记：无**”的流行域名替代 SelfSteal。替代方案详见[文档](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md)。
 8. 完成。
 
 - **额外功能**：
@@ -122,7 +122,7 @@ _MEKO 目前使用 [更精确的 V3 版本](https://github.com/Mekotofeuka/MTPRO
 
 - 此构建中 **MSS** 完全没有必要，因此脚本包含禁用功能。如果保留任何 MSS 规则或限制 SYN 的配置，媒体和下载速度会变慢——建议在应用修复前注释/删除此类设置。
 
-**如果还不明白，请阅读** <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">小白词典</a>，其中用通俗语言解释了所有术语及完整文档。
+**如果还不明白，请阅读** <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">小白词典</a>，其中用通俗语言解释了所有术语及完整文档。
 
 ## 可能的问题（“为什么可能不工作？”）
 
@@ -169,7 +169,7 @@ dalink.to/mekome
 </a>
 
 ## 特别感谢贡献者：
-[![贡献者](https://contrib.rocks/image?repo=Mekotofeuka/MTPROTO_FIX_By_MEKO)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/graphs/contributors)
+[![贡献者](https://contrib.rocks/image?repo=Mekotofeuka/MTPROTO_FIX_By_MEKO)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/graphs/contributors)
 - [@CryZFix](https://github.com/CryZFix/)
 - [@Bxhost](https://github.com/bxhost)
 - [@Liafanx](https://github.com/Liafanx)

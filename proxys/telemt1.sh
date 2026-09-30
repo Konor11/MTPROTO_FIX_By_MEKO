@@ -1734,7 +1734,7 @@ _get_web_template() {
     if [ -n "$base" ]; then
         urls+=("${base%/}/data/webconfig.txt")
     fi
-    urls+=("https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/data/webconfig.txt")
+    urls+=("https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/data/webconfig.txt")
     local u=""
     for u in "${urls[@]}"; do
         if curl -fsSL --max-time 20 "$u" -o "$dest" 2>/dev/null && [ -s "$dest" ]; then
@@ -2000,10 +2000,28 @@ _web_proxy_install() {
     fi
 
     local content=""
-    content=$(cat "$tpl")
-    content="${content//\"zdez.tvoi.domen.com\"/\"$web_host\"}"
-    content="${content//\"12.34.56.789:443\"/\"$web_ip:443\"}"
-    content="${content//hello = \"e5544cb710bae52b8bcbc05375921c16\"/hello = \"$web_secret\"}"
+    # Подстановка ПО КЛЮЧАМ, а не по литералам: правки data/webconfig.txt
+    # не должны превращать подстановку в тихий no-op.
+    local esc_host esc_ip esc_secret
+    esc_host=$(printf '%s' "$web_host" | sed 's/[&#\\]/\\&/g')
+    esc_ip=$(printf '%s' "$web_ip" | sed 's/[&#\\]/\\&/g')
+    esc_secret=$(printf '%s' "$web_secret" | sed 's/[&#\\]/\\&/g')
+    content=$(sed -E \
+        -e "s#^([[:space:]]*tls_domain[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_host\"#" \
+        -e "s#^([[:space:]]*host[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_host\"#" \
+        -e "s#^([[:space:]]*public_addr[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_ip:443\"#" \
+        -e "s#^([[:space:]]*hello[[:space:]]*=[[:space:]]*)\"[^\"]*\"#\1\"$esc_secret\"#" \
+        "$tpl")
+    # Проверяем, что подстановка реально произошла (иначе тихий no-op)
+    if ! grep -qF -- "$web_host" <<< "$content" \
+       || ! grep -qF -- "$web_ip:443" <<< "$content" \
+       || ! grep -qF -- "$web_secret" <<< "$content" \
+       || grep -qF -- 'CHANGE_ME_32HEX' <<< "$content"; then
+        echo -e "  ${RED}[x]${NC} Не удалось подставить значения в WEB-конфиг"
+        echo -e "  ${DIM}Проверьте ключи tls_domain/host/public_addr/access.users в data/webconfig.txt${NC}"
+        rm -f "$tpl"
+        return 1
+    fi
     if [ "$web_user" != "hello" ]; then
         content="${content//hello = /$web_user = }"
         content="${content//links_show = \[\"hello\"\]/links_show = [\"$web_user\"]}"
@@ -2046,7 +2064,7 @@ _ensure_backup_panel() {
     if [ -s "$dest" ]; then
         return 0
     fi
-    local base="${EXTRA_BASE_URL:-https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main}"
+    local base="${EXTRA_BASE_URL:-https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main}"
     echo -e "  ${YELLOW}Файл $dest не найден, скачиваю...${NC}"
     mkdir -p "$(dirname "$dest")"
     if curl -fsSL --max-time 20 "$base/data/backup_panel.sh" -o "$dest" && [ -s "$dest" ]; then

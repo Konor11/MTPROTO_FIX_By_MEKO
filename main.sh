@@ -89,11 +89,11 @@ ensure_rules_loaded() {
 
     log_warning "Файл $RULES_SCRIPT не найден, скачиваю с GitHub..."
     mkdir -p "$INSTALL_DIR/data"
-    if curl -fsSL --max-time 5 "https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/data/rules.sh" -o "$RULES_SCRIPT"; then
+    if curl -fsSL --max-time 5 "https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/data/rules.sh" -o "$RULES_SCRIPT"; then
         chmod +x "$RULES_SCRIPT"
         source "$RULES_SCRIPT"
         RULES_LOADED=1
-        if curl -fsSL --max-time 5 "https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh" -o "$INSTALL_DIR/data/zapret2_fix.sh"; then
+        if curl -fsSL --max-time 5 "https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh" -o "$INSTALL_DIR/data/zapret2_fix.sh"; then
             chmod +x "$INSTALL_DIR/data/zapret2_fix.sh"
             source "$INSTALL_DIR/data/zapret2_fix.sh"
             if declare -f load_settings >/dev/null 2>&1; then load_settings 2>/dev/null || true; fi
@@ -110,7 +110,7 @@ ensure_rules_loaded() {
 }
 
 # ── Загрузка дополнительных меню (data/*.sh) ─────────────────
-EXTRA_BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main"
+EXTRA_BASE_URL="https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main"
 
 # ensure_data_script <относительный путь, напр. data/backup_panel.sh>
 # Если файла нет (например, при обновлении со старой версии) — скачать.
@@ -1453,7 +1453,7 @@ main_menu() {
 
 # ── Обновление скрипта ──────────────────────────────────────────
 update_script() {
-    local BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main"
+    local BASE_URL="https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main"
     local MANIFEST_URL="$BASE_URL/data/manifest.txt"
     local MANIFEST_FILE="/tmp/manifest_update.txt"
     local url="$BASE_URL/main.sh"
@@ -1599,7 +1599,7 @@ update_script() {
 
 # ── Установка/обновление Node Manager ──────────────────────────
 install_node_manager() {
-    local BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main"
+    local BASE_URL="https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main"
     local MANIFEST_URL="$BASE_URL/remote_ctl/manifest.txt"
     local MANIFEST_FILE="/tmp/node_manager_manifest.txt"
     local NODE_DIR="$INSTALL_DIR/remote_ctl"

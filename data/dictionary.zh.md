@@ -8,13 +8,13 @@
 </a>
 
 ---
-[![最新发布](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/releases/latest) [![许可证: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/network/members) [![PRs 欢迎](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/pulls)
+[![最新发布](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/releases/latest) [![许可证: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/network/members) [![PRs 欢迎](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/pulls)
 [![Telegram](https://telegram-badge.vercel.app/api/telegram-badge?channelId=@meko_mtprotofix)](https://t.me/meko_mtprotofix)
 
 </div>
 
 <p align="center">
-  · <a href="#快速开始">一键安装</a> · <a href="#工作原理">工作原理🔧</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO">返回主页</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.md">Русский</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.en.md">English</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Русский словарь</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.en.md">English Dictionary</a> ·
+  · <a href="#快速开始">一键安装</a> · <a href="#工作原理">工作原理🔧</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO">返回主页</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.md">Русский</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.en.md">English</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Русский словарь</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.en.md">English Dictionary</a> ·
 </p>
 
 <p align="center">
@@ -83,7 +83,7 @@ _默认使用 V3 并推荐安装，因为 **V4** 并非适用于所有人的通�
 修复的图形化描述（点击图片查看全屏）：
 <img width="512" height="890" alt="mermaid" src="https://github.com/user-attachments/assets/bbb2321c-e286-4934-bbe4-46f36ac03836" />
 
-_完整的 IPTABLES、NFTABLES 规则和 zapret2 设置见 [rules.sh](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/rules.sh)。_
+_完整的 IPTABLES、NFTABLES 规则和 zapret2 设置见 [rules.sh](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/rules.sh)。_
 
 **SYN FIX / SYN Limit** — 限制每个 IP 每秒入站 SYN 包的数量。
 
@@ -231,4 +231,4 @@ _完整的 IPTABLES、NFTABLES 规则和 zapret2 设置见 [rules.sh](https://gi
 
 此致，MEKO。并且，不，我还没有被通缉（目前还没有）。
 
-· <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO">返回主页</a> ·
+· <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO">返回主页</a> ·

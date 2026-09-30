@@ -72,7 +72,7 @@ MIGRATE_DIR="/root"
 MIGRATE_ARCHIVE=""     # --archive: что переносить (иначе спросит/создаст свежий)
 MIGRATE_DEPLOY=0       # --deploy: после передачи развернуть на новом сервере
 ASSUME_YES=0           # --yes: не задавать подтверждающих вопросов
-MEKO_INSTALL_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/install.sh"
+MEKO_INSTALL_URL="https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/install.sh"
 
 usage() {
     echo "Использование: bash $0 [--scope all|telemt|fix]"

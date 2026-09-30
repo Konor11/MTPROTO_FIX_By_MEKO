@@ -442,7 +442,7 @@ install_syn_fix() {
             ssh_interactive "bash /opt/mtpr-simple/data/zapret2_fix.sh"
         else
             log_error "zapret2_fix.sh не найден на удалённом сервере, скачиваю..."
-            ssh_exec "mkdir -p /opt/mtpr-simple/data && curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh -o /opt/mtpr-simple/data/zapret2_fix.sh && chmod +x /opt/mtpr-simple/data/zapret2_fix.sh"
+            ssh_exec "mkdir -p /opt/mtpr-simple/data && curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh -o /opt/mtpr-simple/data/zapret2_fix.sh && chmod +x /opt/mtpr-simple/data/zapret2_fix.sh"
             log_success "zapret2_fix.sh скачан, запускаю..."
             ssh_interactive "bash /opt/mtpr-simple/data/zapret2_fix.sh"
         fi
@@ -788,7 +788,7 @@ main_menu() {
                     ssh_interactive "bash /opt/mtpr-simple/data/zapret2_fix.sh"
                 else
                     log_error "zapret2_fix.sh не найден на удалённом сервере, скачиваю..."
-                    ssh_exec "mkdir -p /opt/mtpr-simple/data && curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh -o /opt/mtpr-simple/data/zapret2_fix.sh && chmod +x /opt/mtpr-simple/data/zapret2_fix.sh"
+                    ssh_exec "mkdir -p /opt/mtpr-simple/data && curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh -o /opt/mtpr-simple/data/zapret2_fix.sh && chmod +x /opt/mtpr-simple/data/zapret2_fix.sh"
                     log_success "zapret2_fix.sh скачан, запускаю..."
                     ssh_interactive "bash /opt/mtpr-simple/data/zapret2_fix.sh"
                 fi

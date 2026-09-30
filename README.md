@@ -9,13 +9,13 @@
 
 
 ---
-[![Latest Release](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/network/members) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/pulls)
+[![Latest Release](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/network/members) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/pulls)
 [![Telegram](https://telegram-badge.vercel.app/api/telegram-badge?channelId=@meko_mtprotofix)](https://t.me/meko_mtprotofix)
 
 </div>
 
 <p align="center">
-  · <a href="#Быстрый-старт">Установка в 1️⃣ клик</a> · <a href="#Как-работает-фикс-v3">Как работает🔧</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Документация и Словарь для чайников</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.en.md">English</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.zh.md">中文</a> ·
+  · <a href="#Быстрый-старт">Установка в 1️⃣ клик</a> · <a href="#Как-работает-фикс-v3">Как работает🔧</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Документация и Словарь для чайников</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.en.md">English</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.zh.md">中文</a> ·
   · <a href="#Возможные-проблемыпочему-у-меня-может-не-работать">FAQ❓</a> 
   
 </p>
@@ -28,9 +28,9 @@
 Установка, обновление, откат, настройка, изменение конфигов, просмотр логов, установка и работа с панелями, получение ссылки на подключение - **без ввода каких-либо команд**.
 А также выполняет все необходимые функции для работы с VPN панелями/нодами
 
-⭐️ _Один из наших фиксов [старой V2 версии](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#%D0%A2%D0%B5%D1%80%D0%BC%D0%B8%D0%BD%D1%8B-%D1%81%D0%B2%D1%8F%D0%B7%D0%B0%D0%BD%D0%BD%D1%8B%D0%B5-%D1%81-%D1%84%D0%B8%D0%BA%D1%81%D0%BE%D0%BC) уже взяли себе в использование TELEMT и Mtproto zig_ ⭐️
+⭐️ _Один из наших фиксов [старой V2 версии](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#%D0%A2%D0%B5%D1%80%D0%BC%D0%B8%D0%BD%D1%8B-%D1%81%D0%B2%D1%8F%D0%B7%D0%B0%D0%BD%D0%BD%D1%8B%D0%B5-%D1%81-%D1%84%D0%B8%D0%BA%D1%81%D0%BE%D0%BC) уже взяли себе в использование TELEMT и Mtproto zig_ ⭐️
 
-_MEKO использует на данный момент [более точную и универсальную V3 и более быструю V4 версию](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом)_
+_MEKO использует на данный момент [более точную и универсальную V3 и более быструю V4 версию](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом)_
 </div>
 
 ---
@@ -81,6 +81,44 @@ _MEKO использует на данный момент [более точну
 
 </div>
 
+---
+
+## Konor11/MTPROTO_FIX_By_MEKO — форк
+
+Форк [Mekotofeuka/MTPROTO_FIX_By_MEKO](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO)
+с двумя исправлениями, которые ломали установку WEB-прокси и Telemt Panel.
+
+### 1. WEB-прокси: подстановка по ключам вместо по литералам
+
+`proxys/telemt1.sh`, функция `_web_proxy_install`. Подстановка домена, IP и секрета
+в `data/webconfig.txt` искала строковые литералы (`"zdez.tvoi.domen.com"`,
+`"12.34.56.789:443"`, `hello = "e5544cb7..."`), которых в шаблоне уже нет — там
+плейсхолдеры `example.com`, `203.0.113.10` и `CHANGE_ME_32HEX`. Все три замены
+молча не срабатывали: скрипт рапортовал `✓ WEB-ссылка`, nginx и SSL вставали,
+а в конфиге оставались `example.com` и `203.0.113.10` (IP из документации).
+Прокси не работал.
+
+Теперь значения подставляются по ключам (`tls_domain`, `host`, `public_addr`,
+`access.users`) через `sed -E`, и результат проверяется: если `CHANGE_ME_32HEX`
+всё ещё в конфиге — установка прерывается с ошибкой, а не печатает ссылку.
+
+### 2. Telemt Panel: выбор версии с корректной чек-суммой
+
+`proxys/telemt_panel_amirotin.sh`. `install.sh` панели ищет ассет
+`<asset>.tar.gz.sha256` и требует, чтобы внутри архива лежал ровно `telemt-panel`.
+В `v0.6.x` naming другой (`.sha256` без `.tar.gz`, внутри
+`telemt-panel-<arch>-linux-<libc>`), поэтому установка падала с
+`Не удалось получить файл контрольной суммы`. `releases/latest` отдаёт именно
+`v0.6.2`, потому что `v1.0.0-rc.*` — prerelease.
+
+Функция `_panel_pick_version` перебирает релизы и берёт первый, у которого есть
+согласованная пара ассетов и корректное содержимое архива, после чего передаёт
+`--version` в установщик.
+
+Ссылки на исходный репозиторий внутри скриптов перенаправлены на форк, чтобы
+`mekopr update` не затирал исправления. Бейджи со звёздами и звёздная история
+намеренно остались на upstream.
+
 ## Быстрый старт:
 
 **Внимание, данный скрипт платный, цена: 1 ⭐ на репозиторий**
@@ -88,14 +126,14 @@ _MEKO использует на данный момент [более точну
 1. **Установить/обновить наш скрипт**:
    > P.S. прочитайте ReadMe/Документацию, чтобы сделать всё корректно, особенно если вы перешли с чьего-то видео/гайда, так как в тех, что имеются в сети сейчас - много неточностей и неправильных настроек. Прочитайте внимательно пункты ниже, это займёт буквально 1-2 минуты, но зато всё будет работать с первого раза
 ```Bash
-curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash
 ```
 2. **Установить стандартный Telemt**, либо "**MTPROTO.zig**" или **MTG** и так далее.
    > (все прокси можно поставить через меню нашего скрипта, ставить их заранее на сервер не обязательно, также - не важно в какой последовательности ставить: _прокси -> фикс_ или _фикс -> прокси_)
 4. Применить наш фикс к прокси нажав **[1] Меню установки MTProto FIX** в главном меню
 5. **Отключить встроенные MSS и SYN** из конфига телемт нажав **[5]** в **меню настроек телемт** _(если он уже был добавлен в конфиг телемт на сервер ранее)_
 6. Проверьте **SNI** через кнопку **[7]** меню, либо через бота **@Sni_checker_bot**, необходимо подобрать такой домен, который покажет: 🟢 **Маркер: НЕТ**. В ином случае у пользователей с **ios** прокси **работать не будет**.
-7. Если вы используете **SelfSteal**, убедитесь что на сервере стоит **OpenSSL 3.5** и выше, в противном случае аналогично **будут наблюдаться проблемы** у пользователей с **ios**. Если нет возможности поставить **OpenSSL 3.5** и выше, тогда воспользуйтесь вместо селфстила любым **популярным доменом**, который выдаст "🟢 **Маркер: НЕТ**.", _альтернативные решения_ указаны в [документации](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md)
+7. Если вы используете **SelfSteal**, убедитесь что на сервере стоит **OpenSSL 3.5** и выше, в противном случае аналогично **будут наблюдаться проблемы** у пользователей с **ios**. Если нет возможности поставить **OpenSSL 3.5** и выше, тогда воспользуйтесь вместо селфстила любым **популярным доменом**, который выдаст "🟢 **Маркер: НЕТ**.", _альтернативные решения_ указаны в [документации](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md)
 8. **Готово**.
 
 - **Дополнительно**:
@@ -112,23 +150,23 @@ mekopr
 
 Установка только **v3** фикса на порт `443`:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash -s -- -fix -fix-port 443 -fix-type v3
+curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash -s -- -fix -fix-port 443 -fix-type v3
 ```
 
 Установка **Telemt** `3.5.6` и **фикса v3** на порт `443` с доменом `ozon.ru`, **ad_tag** `4c4140a4c40c5e2b080578a7e4e38c95` и **юзером** `Vasya` с секретом `68...dedb`:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash -s -- -telemt -domain ozon.ru -port 443 -fix -fix-type v3 -version 3.5.6 -ad_tag 4c4140a4c40c5e2b080578a7e4e38c95 -user Vasya 68ae8284982465dfcb198342d01cdedb
+curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash -s -- -telemt -domain ozon.ru -port 443 -fix -fix-type v3 -version 3.5.6 -ad_tag 4c4140a4c40c5e2b080578a7e4e38c95 -user Vasya 68ae8284982465dfcb198342d01cdedb
 ```
 
 Установка **TELEMT** версии `3.5.6` **MTProto** на `9443` порт с **фиксом** `V3`, со **SNI** `ozon.ru` на домен `yourdomain.com`, а также поставит **NGINX** и **WEB прокси** на `443` порт:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash -s -- -telemt -domain ozon.ru -port 9443 -version 3.5.6 -web -web-host yourdomain.com -web-user hello -web-secret e5544cb710bae52b8bcbc05375921c16 -nginx -fix -fix-type v3
+curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash -s -- -telemt -domain ozon.ru -port 9443 -version 3.5.6 -web -web-host yourdomain.com -web-user hello -web-secret e5544cb710bae52b8bcbc05375921c16 -nginx -fix -fix-type v3
 ```
 
 
 Установка **Telemt** `3.5.6` и **фикса v3** на порт `443` с доменом `ozon.ru`, **ad_tag** `4c4140a4c40c5e2b080578a7e4e38c95` и **юзером** `Vasya` с секретом `68...dedb`, а также **доменом** `my.domain.com`:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash -s -- -telemt -domain ozon.ru -port 443 -fix -fix-type v3 -version 3.5.6 -ad_tag 4c4140a4c40c5e2b080578a7e4e38c95 -user Vasya 68ae8284982465dfcb198342d01cdedb -public_host my.domain.com
+curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash -s -- -telemt -domain ozon.ru -port 443 -fix -fix-type v3 -version 3.5.6 -ad_tag 4c4140a4c40c5e2b080578a7e4e38c95 -user Vasya 68ae8284982465dfcb198342d01cdedb -public_host my.domain.com
 ```
 
 ### Параметры для автоматической установки
@@ -137,7 +175,7 @@ curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/mai
 | `-telemt`                     | —                          | Установить [Telemt](https://github.com/telemt/telemt)                    |
 | `-zig`                        | —                          | Установить [MTProto.zig](https://github.com/sleep3r/mtproto.zig)               |
 | `-mtg`                        | —                          | Установить [MTG](https://github.com/9seconds/mtg)                       |
-| `-fix`                        | —                          | Установить [MTProto FIX](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO)               |
+| `-fix`                        | —                          | Установить [MTProto FIX](https://github.com/Konor11/MTPROTO_FIX_By_MEKO)               |
 | `-no-fix`                     | —                          | Не устанавливать фикс                |
 | `-fix-type {v2\|v3\|v4\|nft}`| `v3`                       | Тип устанавливаемого фикса (NFT = v3 через NFTables)           |
 | `-fix-port <порт>`            | значение `-port` или `443` | Порт, к которому применяется фикс    |
@@ -180,7 +218,7 @@ curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/mai
   - **DROP** просто обрывает соединение клиента, не сообщая ему об этом, из-за чего происходят **таймауты** (3-5 сек) -> ретраи с бОльшими паузами -> бОльшая задержка. REJECT с RST же в свою очередь обрывая соединение даёт мгновенный ответ клиенту об обрыве из-за чего он(клиент) пробует переподключаться без ожидания, из-за чего подключение к telegram происходит куда быстрее
 - В **MSS** просто нет необходимости для данного билда, поэтому в скрипте добавлена функция его отключения. Если вы оставите у себя правило, либо настройку в конфиге с **MSS** или другим вариантом **SYN** ограничения, то медиа и скорость загрузки будут низкими, так что их рекомендуется закомментировать/удалить с сервера до применения фикса. 
 
-**Если ничего не понял - вперёд читать** <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Словарь для чайников</a>, там описаны все встречающиеся термины простыми словами и вся необходимая документация в более подробном виде.
+**Если ничего не понял - вперёд читать** <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Словарь для чайников</a>, там описаны все встречающиеся термины простыми словами и вся необходимая документация в более подробном виде.
 
 
 
@@ -239,7 +277,7 @@ SOL SPL ``` J2fdY6G4JimD2fEA685Upt4riTTJtPMfXfLBLc7H3zas ```
 
 
 ## Отдельное спасибо за вклад в разработку:
-[![Contributors](https://contrib.rocks/image?repo=Mekotofeuka/MTPROTO_FIX_By_MEKO)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=Mekotofeuka/MTPROTO_FIX_By_MEKO)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/graphs/contributors)
 - [@CryZFix](https://github.com/CryZFix/)
 - [@Bxhost](https://github.com/bxhost)
 - [@Liafanx](https://github.com/Liafanx)

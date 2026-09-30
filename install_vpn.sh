@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main"
+BASE_URL="https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main"
 INSTALL_DIR="/opt/mtpr-simple"
 
 # ── Цвета (только когда stdout — терминал; в пайп/файл не течём ESC) ──

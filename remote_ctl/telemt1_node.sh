@@ -1449,7 +1449,7 @@ _node_has_panel() {
 
 _ensure_backup_panel_node() {
     local dest="/opt/mtpr-simple/data/backup_panel.sh"
-    local base="${EXTRA_BASE_URL:-https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main}"
+    local base="${EXTRA_BASE_URL:-https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main}"
     if _node_has_panel; then
         return 0
     fi

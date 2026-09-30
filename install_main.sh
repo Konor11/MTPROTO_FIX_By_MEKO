@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main" 
+BASE_URL="https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main" 
 MANIFEST_URL="$BASE_URL/data/manifest.txt"
 MANIFEST_FILE="$(mktemp /tmp/mtpr-manifest.XXXXXX.txt 2>/dev/null)" || {
     echo "  [✗] Не удалось создать временный файл для манифеста" >&2

@@ -7,7 +7,7 @@
 set -euo pipefail
 
 INSTALL_DIR="/opt/mtpr-simple"
-EXTRA_BASE_URL="https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main"
+EXTRA_BASE_URL="https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main"
 
 # ── Цвета ───────────────────────────────────────────────────
 if [ -t 1 ]; then

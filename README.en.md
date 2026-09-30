@@ -6,13 +6,13 @@
 <img width="300" height="300" alt="logo" src="https://github.com/user-attachments/assets/8decca32-f96a-4b00-9e6c-1bf16bf94d33" />
 
 ---
-[![Latest Release](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/network/members) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/pulls)
+[![Latest Release](https://img.shields.io/github/v/release/Mekotofeuka/MTPROTO_FIX_By_MEKO?color=neon)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Stars](https://img.shields.io/github/stars/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/stargazers) [![Forks](https://img.shields.io/github/forks/Mekotofeuka/MTPROTO_FIX_By_MEKO?style=social)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/network/members) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/pulls)
 [![Telegram](https://telegram-badge.vercel.app/api/telegram-badge?channelId=@meko_mtprotofix)](https://t.me/meko_mtprotofix)
 
 </div>
 
 <p align="center">
-  · <a href="#quick-start">Install in 1️⃣ click</a> · <a href="#how-it-works">How it works🔧</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO">Back to main page</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.md">Русский</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/README.zh.md">中文</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Русский словарь</a> · <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.zh.md">中文词典</a> ·
+  · <a href="#quick-start">Install in 1️⃣ click</a> · <a href="#how-it-works">How it works🔧</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO">Back to main page</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.md">Русский</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/README.zh.md">中文</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Русский словарь</a> · <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.zh.md">中文词典</a> ·
 </p>
 
 <p align="center">
@@ -27,9 +27,9 @@ Fixes Telegram MTProto proxies and **allows convenient** work with **TELEMT, MTG
 Install, update, rollback, configure, edit configs, view logs, install and work with panels, get connection link – **without typing any commands**.
 Also performs all needed functions for VPN panels/nodes.
 
-⭐️ _One of our fixes [old V2 version](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом) has already been adopted by TELEMT and Mtproto zig_ ⭐️
+⭐️ _One of our fixes [old V2 version](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом) has already been adopted by TELEMT and Mtproto zig_ ⭐️
 
-_MEKO currently uses the [more accurate V3 version](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом)_
+_MEKO currently uses the [more accurate V3 version](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md#Термины-связанные-с-фиксом)_
 </div>
 
 ---
@@ -80,13 +80,13 @@ This script is for servers with MTProto proxies; it fixes slow initial TCP clien
 **Attention, this script is paid; price: 1 ⭐ on the repository**
 
 1. **Install/update our script**:
-<pre><code>curl -fsSL https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash</code></pre>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/install.sh | sudo bash</code></pre>
 2. **Install standard Telemt**, or "**MTPROTO.zig**" or **MTG**
    > (all proxies can be installed via our script menu; you don't need to install them beforehand on the server, and order doesn't matter – proxy first or fix first)
 4. Apply the fix to your proxy by pressing **[1] Install SYN FIX** in the main menu
 5. **Disable built‑in MSS and SYN** from Telemt config by pressing **[5]** (if it was previously added to the config)
 6. Check **SNI** via button **[7]** in menu, or via bot **@Sni_checker_bot** – you must select a domain that shows: 🟢 **Marker: NO**. Otherwise, iOS users will experience problems.
-7. If you use SelfSteal, ensure your server has **OpenSSL 3.5** or higher – otherwise, similar iOS issues will occur. If you can't install **OpenSSL 3.5+**, then use any popular domain that shows "🟢 **Marker: NO**" instead of SelfSteal. Alternative solutions are described in the [documentation](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md).
+7. If you use SelfSteal, ensure your server has **OpenSSL 3.5** or higher – otherwise, similar iOS issues will occur. If you can't install **OpenSSL 3.5+**, then use any popular domain that shows "🟢 **Marker: NO**" instead of SelfSteal. Alternative solutions are described in the [documentation](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md).
 8. Done.
 
 - **Additional**:
@@ -123,7 +123,7 @@ Applies a set of rules to the server that splits devices into two types – **io
 
 - **MSS** is simply unnecessary for this build, so the script includes a function to disable it. If you keep any MSS rule or config setting limiting SYN, media and download speed will be poor – so it's recommended to comment/remove such settings before applying the fix.
 
-**If nothing is clear – go read** <a href="https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Dictionary for dummies</a>, where all terms are explained in plain language along with complete documentation.
+**If nothing is clear – go read** <a href="https://github.com/Konor11/MTPROTO_FIX_By_MEKO/blob/main/data/dictionary.md">Dictionary for dummies</a>, where all terms are explained in plain language along with complete documentation.
 
 ## Possible issues ("why might it not work?")
 
@@ -170,7 +170,7 @@ dalink.to/mekome
 </a>
 
 ## Special thanks for contributions:
-[![Contributors](https://contrib.rocks/image?repo=Mekotofeuka/MTPROTO_FIX_By_MEKO)](https://github.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=Mekotofeuka/MTPROTO_FIX_By_MEKO)](https://github.com/Konor11/MTPROTO_FIX_By_MEKO/graphs/contributors)
 - [@CryZFix](https://github.com/CryZFix/)
 - [@Bxhost](https://github.com/bxhost)
 - [@Liafanx](https://github.com/Liafanx)

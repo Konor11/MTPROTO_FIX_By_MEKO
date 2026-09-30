@@ -826,7 +826,7 @@ install_syn_fix() {
         else
             log_error "zapret2_fix.sh не найден, скачиваю..."
             mkdir -p /opt/mtpr-simple/data
-            curl -fsSL "https://raw.githubusercontent.com/Mekotofeuka/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh" -o /opt/mtpr-simple/data/zapret2_fix.sh
+            curl -fsSL "https://raw.githubusercontent.com/Konor11/MTPROTO_FIX_By_MEKO/main/data/zapret2_fix.sh" -o /opt/mtpr-simple/data/zapret2_fix.sh
             chmod +x /opt/mtpr-simple/data/zapret2_fix.sh
             source /opt/mtpr-simple/data/zapret2_fix.sh
             if declare -f show_zapret2_menu >/dev/null 2>&1; then

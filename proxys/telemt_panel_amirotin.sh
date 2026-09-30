@@ -30,6 +30,30 @@ fetch_and_run() {
     return $rc
 }
 
+_panel_pick_version() {
+    local json tag asset probe
+    json=$(curl -fsSL --max-time 20 "https://api.github.com/repos/amirotin/telemt_panel/releases?per_page=30" 2>/dev/null) || return 1
+    for tag in $(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'); do
+        [ "$tag" = "null" ] && continue
+        for asset in \
+            "telemt-panel-x86_64-linux-gnu.tar.gz" \
+            "telemt-panel-x86_64-linux-musl.tar.gz" \
+            "telemt-panel-aarch64-linux-gnu.tar.gz" \
+            "telemt-panel-aarch64-linux-musl.tar.gz"; do
+            probe=$(curl -fsSL -o /dev/null -w '%{http_code}' --max-time 15 \
+                "https://github.com/amirotin/telemt_panel/releases/download/$tag/$asset.sha256" 2>/dev/null) || probe=""
+            [ "$probe" = "200" ] || continue
+            if curl -fsSL --max-time 60 \
+                "https://github.com/amirotin/telemt_panel/releases/download/$tag/$asset" 2>/dev/null \
+                | tar -tzf - 2>/dev/null | grep -qx 'telemt-panel'; then
+                printf '%s' "$tag"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
 # ── Цвета ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -280,7 +304,16 @@ install_panel() {
     echo ""
     
     # Запускаем установку через официальный скрипт
-    if fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh"; then
+    local _pv=""
+    _pv=$(_panel_pick_version) || _pv=""
+    if [ -n "$_pv" ]; then
+        echo -e "  ${DIM}Версия панели: ${_pv}${NC}"
+        fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh" --version "$_pv" install
+    else
+        echo -e "  ${YELLOW}[!]${NC} Не удалось подобрать версию с корректной чек-суммой — ставлю latest"
+        fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh" install
+    fi
+    if [ $? -eq 0 ]; then
         echo ""
         echo -e "  ${GREEN}${BOLD}[✓]${NC} Панель Telemt Panel успешно установлена!"
         
@@ -468,7 +501,16 @@ update_panel() {
     echo -e "  ${BLUE}[i]${NC} Запуск обновления через установочный скрипт..."
     echo ""
     
-    if fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh"; then
+    local _pv=""
+    _pv=$(_panel_pick_version) || _pv=""
+    if [ -n "$_pv" ]; then
+        echo -e "  ${DIM}Версия панели: ${_pv}${NC}"
+        fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh" --version "$_pv" install
+    else
+        echo -e "  ${YELLOW}[!]${NC} Не удалось подобрать версию с корректной чек-суммой — ставлю latest"
+        fetch_and_run bash "https://raw.githubusercontent.com/amirotin/telemt_panel/main/install.sh" install
+    fi
+    if [ $? -eq 0 ]; then
         echo ""
         local new_version=$(get_panel_version)
         echo -e "  ${GREEN}${BOLD}[✓]${NC} Панель обновлена!"
