@@ -148,6 +148,19 @@ get_tls_domains() {
 }
 
 # ── Расширенное обнаружение Telemt ──────────
+# usable_ip <ip> — пустая строка, если адрес не годится для tg://-ссылки.
+# 0.0.0.0/:: — bind-all, 127.0.0.1/::1 — loopback: клиент по ним не поедет.
+usable_ip() {
+    local ip="${1:-}"
+    case "$ip" in
+        ""|0.0.0.0|"::"|"[::]"|127.0.0.1|"::1"|localhost|"0") return 0 ;;
+    esac
+    case "$ip" in
+        169.254.*|fe80:*|FE80:*) return 0 ;;
+    esac
+    printf '%s' "$ip"
+}
+
 detect_telemt_advanced() {
     local DETECTED_CONFIG_PATH=""
     local DETECTED_PORT=""
@@ -190,8 +203,24 @@ detect_telemt_advanced() {
     # 4. Получаем параметры из конфига
     if [ -n "$DETECTED_CONFIG_PATH" ] && [ -f "$DETECTED_CONFIG_PATH" ]; then
         DETECTED_PORT=$(_toml_get_value "port" "$DETECTED_CONFIG_PATH")
-        DETECTED_IP=$(grep -E '^ip[[:space:]]*=' "$DETECTED_CONFIG_PATH" 2>/dev/null | head -1 | awk -F'=' '{print $2}' | tr -d ' "')
-        DETECTED_PUBLIC_HOST=$(grep -E '^public_host[[:space:]]*=' "$DETECTED_CONFIG_PATH" 2>/dev/null | head -1 | awk -F'=' '{print $2}' | tr -d ' "')
+        # ip из [[server.listeners]] — это bind-адрес (0.0.0.0), а не адрес
+        # сервера для клиента. usable_ip отбрасывает wildcard и link-local.
+        DETECTED_IP=$(usable_ip "$(grep -E '^ip[[:space:]]*=' "$DETECTED_CONFIG_PATH" 2>/dev/null | head -1 | awk -F'=' '{print $2}' | tr -d ' \"')")
+        # public_host живёт в [general.links]; ключ может быть с отступом.
+        DETECTED_PUBLIC_HOST=$(awk '
+            /^[[:space:]]*\[/ { inl = ($0 ~ /^[[:space:]]*\[general\.links\][[:space:]]*$/) ? 1 : 0; next }
+            inl && /^[[:space:]]*public_host[[:space:]]*=/ { sub(/#.*/, ""); sub(/^[^=]*=/, ""); gsub(/[[:space:]"]/, ""); print; exit }
+        ' "$DETECTED_CONFIG_PATH" 2>/dev/null)
+        # В WEB-режиме public_addr из [[web.vhosts]] — авторитетный адрес
+        # этого сервера, надёжнее определения по внешним сервисам.
+        if [ -z "$DETECTED_IP" ]; then
+            DETECTED_IP=$(awk '
+                /^[[:space:]]*\[\[web\.vhosts\]\][[:space:]]*$/ { inv=1; next }
+                inv && /^[[:space:]]*\[/ { exit }
+                inv && /^[[:space:]]*public_addr[[:space:]]*=/ { sub(/#.*/, ""); sub(/^[^=]*=/, ""); gsub(/[[:space:]"]/, ""); sub(/:[0-9]+$/, ""); print; exit }
+            ' "$DETECTED_CONFIG_PATH" 2>/dev/null)
+            DETECTED_IP=$(usable_ip "$DETECTED_IP")
+        fi
         DETECTED_TLS_DOMAIN=$(grep -E '^tls_domain[[:space:]]*=' "$DETECTED_CONFIG_PATH" 2>/dev/null | head -1 | awk -F'=' '{print $2}' | tr -d ' "')
         
         # Ищем секрет - сначала в секции [access.users], потом во всем файле
