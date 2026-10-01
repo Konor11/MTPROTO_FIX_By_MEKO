@@ -1780,6 +1780,10 @@ _get_web_template() {
 # ── Установка/настройка nginx для WEB-режима (с откатом) ─────
 _web_install_nginx() {
     local web_host="$1"
+    # Помечаем, что nginx/certbot ставились ради WEB-прокси: без этого признака
+    # удаление не знает, можно ли сносить пакеты (is-enabled у apt всегда enabled).
+    mkdir -p /opt/mtpr-simple 2>/dev/null || true
+    : > /opt/mtpr-simple/.web_nginx_installed 2>/dev/null || true
 
     if ! command -v nginx >/dev/null 2>&1 || ! command -v certbot >/dev/null 2>&1; then
         echo -e "  ${DIM}Установка nginx и certbot...${NC}"
@@ -2213,15 +2217,24 @@ web_proxy_menu() {
         echo -en "  ${BOLD}Выбор:${NC} "
         local wchoice=""
         { read -r wchoice </dev/tty; } 2>/dev/null || { echo; return 1; }
+        local _action_done=false
         case "$wchoice" in
-            1) _web_proxy_install || true ;;
-            p|P) _web_path_menu "$cfg" || true ;;
-            r|R) _web_reports_menu "$cfg" || true ;;
-            s|S) _web_show_link "$cfg" || true ;;
-            x|X) _web_proxy_remove || true ;;
+            1) _web_proxy_install || true ; _action_done=true ;;
+            p|P) _web_path_menu "$cfg" || true ; _action_done=true ;;
+            r|R) _web_reports_menu "$cfg" || true ; _action_done=true ;;
+            s|S) _web_show_link "$cfg" || true ; _action_done=true ;;
+            x|X) _web_proxy_remove || true ; _action_done=true ;;
             0 | "") return 0 ;;
-            *) echo "  Неверный выбор"; sleep 0.1 ;;
+            *) echo "  Неверный выбор"; sleep 0.3 ;;
         esac
+        # Без паузы цикл доходит до `clear` и стирает весь вывод действия —
+        # пользователь видит мелькнувший текст и пустое меню.
+        if [ "$_action_done" = true ]; then
+            echo ""
+            echo -e "  ${GRAY}Нажмите любую клавишу для возврата в меню${NC}"
+            { read -rsn1 </dev/tty; } 2>/dev/null || true
+            echo ""
+        fi
     done
 }
 
@@ -2349,7 +2362,9 @@ _web_proxy_install() {
     # Показываем, что именно изменится, до записи.
     echo ""
     echo -e "  ${BOLD}Будет изменено:${NC}"
-    diff -u "$cfg" "$newcfg" 2>/dev/null | sed -n '3,$p' | sed 's/^/    /' | head -60
+    # diff возвращает 1, когда файлы различаются, и при `set -eo pipefail`
+    # (он включён в main.sh) это убивало весь скрипт прямо здесь. Форсируем 0.
+    { diff -u "$cfg" "$newcfg" 2>/dev/null || true; } | sed -n '3,$p' | sed 's/^/    /' | head -60 || true
     echo ""
 
     local vrc=0
@@ -2449,10 +2464,14 @@ _web_remove_nginx() {
         fi
     fi
 
-    # Пакеты. Удаляем nginx/certbot только если они ставились для WEB и
-    # больше ничего не слушает — иначе можно уронить чужой сайт.
+    # Пакеты сносим только если: (а) мы их ставили (маркер), (б) в sites-enabled
+    # не осталось чужих сайтов. is-enabled тут бесполезен — у apt-пакетов он всегда
+    # enabled, из-за чего nginx не удалялся никогда.
     local _keep=0
-    if systemctl is-enabled nginx >/dev/null 2>&1; then _keep=1; fi
+    if [ ! -f /opt/mtpr-simple/.web_nginx_installed ]; then
+        echo -e "  ${YELLOW}[!]${NC} nginx/certbot ставились не WEB-прокси — пакеты НЕ удаляю"
+        _keep=1
+    fi
     if [ -d /etc/nginx/sites-enabled ] && ls /etc/nginx/sites-enabled/* >/dev/null 2>&1; then
         echo -e "  ${YELLOW}[!]${NC} В sites-enabled остались другие сайты — nginx НЕ удаляю"
         _keep=1
@@ -2471,6 +2490,14 @@ _web_remove_nginx() {
         else
             echo -e "  ${GREEN}[✓]${NC} nginx и certbot удалены"
         fi
+        rm -f /opt/mtpr-simple/.web_nginx_installed 2>/dev/null || true
+    fi
+
+    # nginx мог остаться (другие сайты) — тогда честно снимаем 443, иначе
+    # он продолжает числиться занятым и следующая установка WEB ругается.
+    if ss -tlnH 2>/dev/null | grep -q ':443 '; then
+        echo -e "  ${YELLOW}[!]${NC} Порт 443 всё ещё занят. Кто слушает:"
+        ss -tlnp 2>/dev/null | grep ':443 ' | sed 's/^/    /' || true
     fi
     return 0
 }
@@ -2521,7 +2548,7 @@ _web_proxy_remove() {
 
     echo ""
     echo -e "  ${BOLD}Будет изменено в ${cfg}:${NC}"
-    diff -u "$cfg" "$newcfg" 2>/dev/null | sed -n '3,$p' | sed 's/^/    /' | head -60
+    { diff -u "$cfg" "$newcfg" 2>/dev/null || true; } | sed -n '3,$p' | sed 's/^/    /' | head -60 || true
     echo ""
 
     echo -en "  ${BOLD}Применить? [y/N]:${NC} "
